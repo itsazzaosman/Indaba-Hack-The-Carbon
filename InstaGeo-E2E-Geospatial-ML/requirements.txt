@@ -22,4 +22,3 @@ streamlit
 tqdm
 pytest-cov
 rioxarray
-wandb>=0.12.10

@@ -126,6 +126,7 @@ class PrithviSeg(nn.Module):
         image_size: int = 224,
         num_classes: int = 2,
         freeze_backbone: bool = True,
+        depth: int | None = None,
     ) -> None:
         """Initialize the PrithviSeg model.
 
@@ -138,6 +139,8 @@ class PrithviSeg(nn.Module):
             image_size (int): Size of input image.
             num_classes (int): Number of target classes.
             freeze_backbone (bool): Flag to freeze ViT transformer backbone weights.
+            depth (int | None): Number of transformer layers to use. If None, uses default
+                from config.
         """
         super().__init__()
         weights_dir = Path.home() / ".instageo" / "prithvi"
@@ -160,17 +163,26 @@ class PrithviSeg(nn.Module):
 
         model_args["num_frames"] = temporal_step
         model_args["img_size"] = image_size
+        if depth is not None:
+            model_args["depth"] = depth
         self.model_args = model_args
         # instantiate model
         model = ViTEncoder(**model_args)
         if freeze_backbone:
             for param in model.parameters():
                 param.requires_grad = False
-        filtered_checkpoint_state_dict = {
-            key[len("encoder.") :]: value
-            for key, value in checkpoint.items()
-            if key.startswith("encoder.")
-        }
+        # Harmonize checkpoint keys with model's state_dict
+        filtered_checkpoint_state_dict = {}
+        for key, value in checkpoint.items():
+            if key.startswith("encoder."):
+                new_key = key[len("encoder.") :]
+                # Only keep blocks from 0 to depth-1
+                if new_key.startswith("blocks."):
+                    block_idx = int(new_key.split(".")[1])
+                    if block_idx < model_args["depth"]:
+                        filtered_checkpoint_state_dict[new_key] = value
+                else:
+                    filtered_checkpoint_state_dict[new_key] = value
         filtered_checkpoint_state_dict["pos_embed"] = (
             torch.from_numpy(
                 get_3d_sincos_pos_embed(

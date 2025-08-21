@@ -6,4 +6,3 @@ tensorboard
 omegaconf
 hydra-core
 torchvision
-wandb>=0.12.10

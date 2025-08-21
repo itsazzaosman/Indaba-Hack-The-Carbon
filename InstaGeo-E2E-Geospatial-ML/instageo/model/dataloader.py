@@ -386,7 +386,7 @@ class InstaGeoDataset(torch.utils.data.Dataset):
         self.constant_multiplier = constant_multiplier
         self.include_filenames = include_filenames
 
-    def __getitem__(self, i: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, i: int) -> Tuple[torch.Tensor, str, torch.Tensor]:
         """Retrieves a sample from dataset.
 
         Args:
@@ -407,7 +407,11 @@ class InstaGeoDataset(torch.utils.data.Dataset):
             constant_multiplier=self.constant_multiplier,
         )
         if self.include_filenames:
-            return self.preprocess_func(arr_x, arr_y), im_fname
+            return (
+                self.preprocess_func(arr_x, arr_y),
+                im_fname,
+                arr_x == self.no_data_value,
+            )
         else:
             return self.preprocess_func(arr_x, arr_y)
 

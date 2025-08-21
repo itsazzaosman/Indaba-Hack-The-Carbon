@@ -1,5 +1,6 @@
 # config.yaml
 root_dir: null
+output_dir: null
 valid_filepath: null
 train_filepath: null
 test_filepath: null
@@ -34,12 +35,3 @@ test:
   crop_size: 224
   stride: 224
   mask_cloud: False
-
-logger:
-  use_wandb: true
-  project: instageo
-  entity: null
-  name: null
-  group: null
-  tags: []
-  notes: null

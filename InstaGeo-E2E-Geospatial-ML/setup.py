@@ -36,6 +36,7 @@ apps_dependencies = [
     "dask==2024.12.1",
     "matplotlib",
     "streamlit==1.31.1",
+    "scikit-learn",
 ]
 setup(
     name="instageo",

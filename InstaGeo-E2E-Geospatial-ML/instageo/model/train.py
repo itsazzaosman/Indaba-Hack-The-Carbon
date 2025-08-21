@@ -463,8 +463,17 @@ class PrithviSegmentationModule(pl.LightningModule):
         """
         # Get current learning rate from optimizer
         optimizers = self.optimizers()
-        if optimizers and len(optimizers) > 0:
-            optimizer = optimizers[0]
+        if optimizers:
+            # Handle both single optimizer and list of optimizers
+            if isinstance(optimizers, list):
+                if len(optimizers) > 0:
+                    optimizer = optimizers[0]
+                else:
+                    return
+            else:
+                # Single optimizer case
+                optimizer = optimizers
+            
             if hasattr(optimizer, 'param_groups') and optimizer.param_groups:
                 current_lr = optimizer.param_groups[0]['lr']
                 self.log(
@@ -982,8 +991,17 @@ class PrithviRegressionModule(pl.LightningModule):
         """
         # Get current learning rate from optimizer
         optimizers = self.optimizers()
-        if optimizers and len(optimizers) > 0:
-            optimizer = optimizers[0]
+        if optimizers:
+            # Handle both single optimizer and list of optimizers
+            if isinstance(optimizers, list):
+                if len(optimizers) > 0:
+                    optimizer = optimizers[0]
+                else:
+                    return
+            else:
+                # Single optimizer case
+                optimizer = optimizers
+            
             if hasattr(optimizer, 'param_groups') and optimizer.param_groups:
                 current_lr = optimizer.param_groups[0]['lr']
                 self.log(

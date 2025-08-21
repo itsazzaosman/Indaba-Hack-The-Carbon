@@ -400,7 +400,7 @@ class PrithviSegmentationModule(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
-            logger=True,
+                logger=True,
         )
         self.log(
             f"{stage}_roc_auc",
@@ -426,7 +426,7 @@ class PrithviSegmentationModule(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-            )
+        )
         for idx, value in enumerate(out["acc_per_class"]):
             self.log(
                 f"{stage}_Acc_{idx}",
@@ -435,7 +435,7 @@ class PrithviSegmentationModule(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-            )
+        )
         for idx, value in enumerate(out["precision_per_class"]):
             self.log(
                 f"{stage}_Precision_{idx}",
@@ -444,7 +444,7 @@ class PrithviSegmentationModule(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-            )
+        )
         for idx, value in enumerate(out["recall_per_class"]):
             self.log(
                 f"{stage}_Recall_{idx}",
@@ -453,7 +453,7 @@ class PrithviSegmentationModule(pl.LightningModule):
                 on_epoch=True,
                 prog_bar=True,
                 logger=True,
-            )
+        )
 
     def log_current_hyperparameters(self) -> None:
         """Log current learning rate and weight decay for WandB tracking.
@@ -462,16 +462,19 @@ class PrithviSegmentationModule(pl.LightningModule):
         during training, which is useful for tracking scheduler changes.
         """
         # Get current learning rate from optimizer
-        if self.optimizers():
-            current_lr = self.optimizers()[0].param_groups[0]['lr']
-            self.log(
-                "current_learning_rate",
-                current_lr,
-                on_step=True,
-                on_epoch=True,
-                prog_bar=False,
-                logger=True,
-            )
+        optimizers = self.optimizers()
+        if optimizers and len(optimizers) > 0:
+            optimizer = optimizers[0]
+            if hasattr(optimizer, 'param_groups') and optimizer.param_groups:
+                current_lr = optimizer.param_groups[0]['lr']
+                self.log(
+                    "current_learning_rate",
+                    current_lr,
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=False,
+                    logger=True,
+                )
         
         # Log weight decay (this typically doesn't change during training)
         self.log(
@@ -978,16 +981,19 @@ class PrithviRegressionModule(pl.LightningModule):
         during training, which is useful for tracking scheduler changes.
         """
         # Get current learning rate from optimizer
-        if self.optimizers():
-            current_lr = self.optimizers()[0].param_groups[0]['lr']
-            self.log(
-                "current_learning_rate",
-                current_lr,
-                on_step=True,
-                on_epoch=True,
-                prog_bar=False,
-                logger=True,
-            )
+        optimizers = self.optimizers()
+        if optimizers and len(optimizers) > 0:
+            optimizer = optimizers[0]
+            if hasattr(optimizer, 'param_groups') and optimizer.param_groups:
+                current_lr = optimizer.param_groups[0]['lr']
+                self.log(
+                    "current_learning_rate",
+                    current_lr,
+                    on_step=True,
+                    on_epoch=True,
+                    prog_bar=False,
+                    logger=True,
+                )
         
         # Log weight decay (this typically doesn't change during training)
         self.log(

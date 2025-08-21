@@ -314,7 +314,7 @@ def main(cfg: DictConfig) -> None:
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
+            num_workers=4,
         )
         mean, std = compute_mean_std(train_loader)
         print(json.dumps({"mean": mean, "std": std}))
@@ -357,10 +357,10 @@ def main(cfg: DictConfig) -> None:
             constant_multiplier=cfg.dataloader.constant_multiplier,
         )
         train_loader = create_dataloader(
-            train_dataset, batch_size=batch_size, shuffle=True, num_workers=0
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
         )
         valid_loader = create_dataloader(
-            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=0
+            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4
         )
         model = create_model(cfg, IM_SIZE, TEMPORAL_SIZE)
         hydra_out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir

@@ -31,7 +31,7 @@ import pytorch_lightning as pl
 import rasterio
 import torch
 from omegaconf import DictConfig, OmegaConf
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
@@ -375,22 +375,45 @@ def main(cfg: DictConfig) -> None:
             mode=mode,
         )
 
+        # Log learning rate every step regardless of scheduler
+        lr_monitor = LearningRateMonitor(logging_interval="step")
+
         # Create loggers
         loggers = [TensorBoardLogger(hydra_out_dir, name="instageo")]
         
         # Add WandB logger if enabled
         if getattr(cfg.train, "use_wandb", False):
+            # Log important hyperparameters to WandB
             wandb_logger = WandbLogger(
                 project=getattr(cfg.train, "wandb_project", "instageo"),
                 name=getattr(cfg.train, "wandb_run_name", None),
                 log_model=getattr(cfg.train, "wandb_log_model", False)
             )
+            
+            # Log initial hyperparameters to config
+            wandb_logger.experiment.config.update({
+                "initial_learning_rate": cfg.train.learning_rate,
+                "initial_weight_decay": cfg.train.weight_decay,
+                "batch_size": cfg.train.batch_size,
+                "num_epochs": cfg.train.num_epochs,
+                "model_freeze_backbone": cfg.model.freeze_backbone,
+                "model_num_classes": cfg.model.num_classes,
+                "dataloader_img_size": cfg.dataloader.img_size,
+                "dataloader_temporal_dim": cfg.dataloader.temporal_dim,
+                "dataloader_bands": cfg.dataloader.bands,
+                "is_regression_task": cfg.is_reg_task
+            })
+            
+            # Store wandb_logger reference for the model to access
+            # This allows the model to log current LR and weight decay during training
+            wandb_logger.experiment.config["wandb_logger"] = wandb_logger
+            
             loggers.append(wandb_logger)
 
         trainer = pl.Trainer(
             accelerator=get_device(),
             max_epochs=cfg.train.num_epochs,
-            callbacks=[checkpoint_callback],
+            callbacks=[checkpoint_callback, lr_monitor],
             logger=loggers,
         )
 

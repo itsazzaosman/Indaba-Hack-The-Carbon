@@ -52,10 +52,20 @@ python run.py train.use_wandb=true train.wandb_project="my-experiment" train.wan
 
 When WandB is enabled, the following information is automatically logged:
 
-- Training and validation metrics (loss, accuracy, IoU, RMSE, etc.)
-- Model hyperparameters
-- Training configuration
-- Model artifacts (if `wandb_log_model: true`)
+- **Training and validation metrics**: loss, accuracy, IoU, RMSE, etc.
+- **Initial hyperparameters** (logged once at start):
+  - Initial learning rate
+  - Initial weight decay
+  - Batch size
+  - Number of epochs
+  - Model configuration (freeze_backbone, num_classes)
+  - Data configuration (image size, temporal dimension, bands)
+  - Task type (regression vs segmentation)
+- **Dynamic hyperparameters** (logged every training step):
+  - **Current learning rate** - tracks scheduler changes (e.g., CosineAnnealingWarmRestarts)
+  - **Current weight decay** - tracks any weight decay changes
+- **Training configuration**: All other settings from your config
+- **Model artifacts**: Model checkpoints (if `wandb_log_model: true`)
 
 ## Integration Details
 
@@ -63,6 +73,8 @@ When WandB is enabled, the following information is automatically logged:
 - No changes to existing training code are required
 - WandB integration is completely optional and backward compatible
 - All existing functionality remains unchanged
+- **Learning rate schedulers are automatically tracked** - current LR is logged every training step
+- **Weight decay changes are tracked** - current weight decay is logged every training step
 
 ## Troubleshooting
 

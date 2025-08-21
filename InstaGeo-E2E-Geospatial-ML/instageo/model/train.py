@@ -107,6 +107,10 @@ class PrithviSegmentationModule(pl.LightningModule):
         outputs = self.forward(inputs)
         loss = self.criterion(outputs, labels.long())
         self.log_metrics(outputs, labels, "train", loss)
+        
+        # Log current learning rate and weight decay for WandB tracking
+        self.log_current_hyperparameters()
+        
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -451,6 +455,34 @@ class PrithviSegmentationModule(pl.LightningModule):
                 logger=True,
             )
 
+    def log_current_hyperparameters(self) -> None:
+        """Log current learning rate and weight decay for WandB tracking.
+        
+        This method logs the current values of learning rate and weight decay
+        during training, which is useful for tracking scheduler changes.
+        """
+        # Get current learning rate from optimizer
+        if self.optimizers():
+            current_lr = self.optimizers()[0].param_groups[0]['lr']
+            self.log(
+                "current_learning_rate",
+                current_lr,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+            )
+        
+        # Log weight decay (this typically doesn't change during training)
+        self.log(
+            "current_weight_decay",
+            self.weight_decay,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=False,
+            logger=True,
+        )
+
     def compute_metrics(
         self, pred_mask: torch.Tensor, gt_mask: torch.Tensor
     ) -> dict[str, List[float]]:
@@ -663,6 +695,10 @@ class PrithviRegressionModule(pl.LightningModule):
         loss = self.criterion(valid_outputs, valid_labels_transformed).mean()
         valid_outputs_original_scale = self._inverse_log_transform(valid_outputs)
         self.log_metrics(valid_outputs_original_scale, valid_labels, "train", loss)
+        
+        # Log current learning rate and weight decay for WandB tracking
+        self.log_current_hyperparameters()
+        
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
@@ -932,6 +968,34 @@ class PrithviRegressionModule(pl.LightningModule):
             on_step=True,
             on_epoch=True,
             prog_bar=True,
+            logger=True,
+        )
+
+    def log_current_hyperparameters(self) -> None:
+        """Log current learning rate and weight decay for WandB tracking.
+        
+        This method logs the current values of learning rate and weight decay
+        during training, which is useful for tracking scheduler changes.
+        """
+        # Get current learning rate from optimizer
+        if self.optimizers():
+            current_lr = self.optimizers()[0].param_groups[0]['lr']
+            self.log(
+                "current_learning_rate",
+                current_lr,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=False,
+                logger=True,
+            )
+        
+        # Log weight decay (this typically doesn't change during training)
+        self.log(
+            "current_weight_decay",
+            self.weight_decay,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=False,
             logger=True,
         )
 

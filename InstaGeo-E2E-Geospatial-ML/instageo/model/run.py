@@ -30,6 +30,7 @@ import numpy as np
 import pytorch_lightning as pl
 import rasterio
 import torch
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
@@ -403,6 +404,25 @@ def main(cfg: DictConfig) -> None:
                 "dataloader_bands": cfg.dataloader.bands,
                 "is_regression_task": cfg.is_reg_task
             })
+            
+            # Log the biomass.yaml config file as an artifact
+            try:
+                config_dir = os.path.join(os.path.dirname(__file__), "configs")
+                biomass_config_path = os.path.join(config_dir, "biomass.yaml")
+                
+                if os.path.exists(biomass_config_path):
+                    wandb_logger.experiment.log_artifact(
+                        wandb.Artifact(
+                            name="biomass_config",
+                            type="config",
+                            description="Biomass training configuration file"
+                        ).add_file(biomass_config_path, "biomass.yaml")
+                    )
+                    log.info("Successfully logged biomass.yaml config file to WandB")
+                else:
+                    log.warning(f"Biomass config file not found at {biomass_config_path}")
+            except Exception as e:
+                log.warning(f"Failed to log config file to WandB: {e}")
             
             # Store wandb_logger reference for the model to access
             # This allows the model to log current LR and weight decay during training

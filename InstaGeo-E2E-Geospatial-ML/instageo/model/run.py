@@ -119,7 +119,7 @@ def create_dataloader(
     dataset: Dataset,
     batch_size: int,
     shuffle: bool = False,
-    num_workers: int = 1,
+    num_workers: int = 4,
     collate_fn: Optional[Callable] = None,
     pin_memory: bool = True,
 ) -> DataLoader:
@@ -132,7 +132,7 @@ def create_dataloader(
         dataset (Dataset): The dataset to load data from.
         batch_size (int): How many samples per batch to load.
         shuffle (bool): Set to True to have the data reshuffled at every epoch.
-        num_workers (int): How many subprocesses to use for data loading.
+        num_workers (int): How many subprocesses to use for data loading. Default 4 for better performance.
         collate_fn (Optional[Callable]): Merges a list of samples to form a mini-batch.
         pin_memory (bool): If True, the data loader will copy tensors into CUDA pinned
             memory.
@@ -140,6 +140,8 @@ def create_dataloader(
     Returns:
         DataLoader: An instance of the PyTorch DataLoader.
     """
+    # Note: On Windows, num_workers > 0 may cause issues. If you encounter problems,
+    # try setting num_workers=0 (single-process data loading)
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -219,6 +221,11 @@ class PrithviSegmentationModule(pl.LightningModule):
         """
         inputs, labels = batch
         outputs = self.forward(inputs)
+        
+        # Debug: log output shape for first few batches
+        if batch_idx < 3:
+            log.info(f"Training batch {batch_idx}: outputs shape: {outputs.shape}, labels shape: {labels.shape}")
+        
         loss = self.criterion(outputs, labels.long())
         self.log_metrics(outputs, labels, "train", loss)
         return loss
@@ -235,6 +242,11 @@ class PrithviSegmentationModule(pl.LightningModule):
         """
         inputs, labels = batch
         outputs = self.forward(inputs)
+        
+        # Debug: log output shape for first few batches
+        if batch_idx < 3:
+            log.info(f"Validation batch {batch_idx}: outputs shape: {outputs.shape}, labels shape: {labels.shape}")
+        
         loss = self.criterion(outputs, labels.long())
         self.log_metrics(outputs, labels, "val", loss)
         return loss
@@ -265,7 +277,13 @@ class PrithviSegmentationModule(pl.LightningModule):
             torch.Tensor: The loss value for the batch.
         """
         prediction = self.forward(batch)
-        probabilities = torch.nn.functional.softmax(prediction, dim=1)[:, 1, :, :]
+        # Handle case where model outputs only 1 class (binary classification)
+        if prediction.shape[1] == 1:
+            # Binary case: sigmoid activation
+            probabilities = torch.sigmoid(prediction).squeeze(1)
+        else:
+            # Multi-class case: softmax activation
+            probabilities = torch.nn.functional.softmax(prediction, dim=1)[:, 1, :, :]
         return probabilities
 
     def configure_optimizers(
@@ -391,10 +409,21 @@ class PrithviSegmentationModule(pl.LightningModule):
             dict: A dictionary containing 'iou', 'overall_accuracy', and
                 'accuracy_per_class', 'precision_per_class' and 'recall_per_class'.
         """
-        prediction_proba = torch.nn.functional.softmax(pred_mask.detach(), dim=1)[
-            :, 1, :, :
-        ]
-        pred_mask = torch.argmax(pred_mask, dim=1)
+        # Debug: log prediction shape
+        log.info(f"Prediction shape: {pred_mask.shape}, Expected classes: {self.net.segmentation_head[-1].out_channels}")
+        
+        # Handle case where model outputs only 1 class (binary classification)
+        if pred_mask.shape[1] == 1:
+            # Binary case: sigmoid activation
+            prediction_proba = torch.sigmoid(pred_mask.detach()).squeeze(1)
+            pred_mask = (prediction_proba > 0.5).long()
+        else:
+            # Multi-class case: softmax activation
+            prediction_proba = torch.nn.functional.softmax(pred_mask.detach(), dim=1)[
+                :, 1, :, :
+            ]
+            pred_mask = torch.argmax(pred_mask, dim=1)
+        
         no_ignore = gt_mask.ne(self.ignore_index).to(self.device)
         prediction_proba = prediction_proba.masked_select(no_ignore).cpu().numpy()
         pred_mask = pred_mask.masked_select(no_ignore).cpu().numpy()
@@ -533,7 +562,7 @@ def main(cfg: DictConfig) -> None:
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=1,
+            num_workers=4,
         )
         mean, std = compute_mean_std(train_loader)
         print(mean)
@@ -576,10 +605,10 @@ def main(cfg: DictConfig) -> None:
             constant_multiplier=cfg.dataloader.constant_multiplier,
         )
         train_loader = create_dataloader(
-            train_dataset, batch_size=batch_size, shuffle=True, num_workers=1
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
         )
         valid_loader = create_dataloader(
-            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=1
+            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4
         )
         model = PrithviSegmentationModule(
             image_size=IM_SIZE,
@@ -620,6 +649,8 @@ def main(cfg: DictConfig) -> None:
                     OmegaConf.to_container(cfg, resolve=True), allow_val_change=True
                 )
                 logger = [logger, wandb_logger]
+        except ImportError as e:
+            log.warning(f"Wandb logger not initialized: {e}")
         except Exception as e:
             log.warning(f"Wandb logger not initialized: {e}")
 

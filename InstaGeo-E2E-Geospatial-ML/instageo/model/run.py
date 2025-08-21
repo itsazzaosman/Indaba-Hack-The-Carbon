@@ -32,7 +32,7 @@ import rasterio
 import torch
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
@@ -375,13 +375,23 @@ def main(cfg: DictConfig) -> None:
             mode=mode,
         )
 
-        logger = TensorBoardLogger(hydra_out_dir, name="instageo")
+        # Create loggers
+        loggers = [TensorBoardLogger(hydra_out_dir, name="instageo")]
+        
+        # Add WandB logger if enabled
+        if getattr(cfg.train, "use_wandb", False):
+            wandb_logger = WandbLogger(
+                project=getattr(cfg.train, "wandb_project", "instageo"),
+                name=getattr(cfg.train, "wandb_run_name", None),
+                log_model=getattr(cfg.train, "wandb_log_model", False)
+            )
+            loggers.append(wandb_logger)
 
         trainer = pl.Trainer(
             accelerator=get_device(),
             max_epochs=cfg.train.num_epochs,
             callbacks=[checkpoint_callback],
-            logger=logger,
+            logger=loggers,
         )
 
         # run training and validation

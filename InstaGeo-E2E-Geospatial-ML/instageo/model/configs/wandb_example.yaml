@@ -1,11 +1,13 @@
-# config.yaml
+# Example configuration with WandB enabled
+# Copy this file and modify as needed, or override specific values
+
 root_dir: null
 output_dir: null
 valid_filepath: null
 train_filepath: null
 test_filepath: null
 checkpoint_path: null
-mode: train # train or eval
+mode: train
 
 train:
   learning_rate: 0.0001
@@ -14,18 +16,18 @@ train:
   class_weights: [1, 1]
   ignore_index: -100
   weight_decay: 0.01
-  # WandB configuration
-  use_wandb: false  # Set to true to enable WandB logging
-  wandb_project: "instageo"  # WandB project name
-  wandb_run_name: null  # Optional custom run name
-  wandb_log_model: false  # Whether to log model artifacts
+  # WandB configuration - ENABLED
+  use_wandb: true
+  wandb_project: "instageo-biomass"
+  wandb_run_name: "experiment_001"
+  wandb_log_model: true
 
 model:
   freeze_backbone: False
   num_classes: 2
 
 dataloader:
-  bands: [1, 2, 3, 8, 11, 12] # Blue, Green, Red, Narrow NIR, SWIR 1, SWIR 2
+  bands: [1, 2, 3, 8, 11, 12]
   mean: [0.14245495, 0.13921481, 0.12434631, 0.31420089, 0.20743526, 0.12046503]
   std: [0.04036231, 0.04186983, 0.05267646, 0.0822221, 0.06834774, 0.05294205]
   img_size: 224

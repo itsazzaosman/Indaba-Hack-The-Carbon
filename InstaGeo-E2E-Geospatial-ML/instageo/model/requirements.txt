@@ -6,3 +6,4 @@ tensorboard
 omegaconf
 hydra-core
 torchvision
+wandb

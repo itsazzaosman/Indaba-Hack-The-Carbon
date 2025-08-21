@@ -34,3 +34,12 @@ test:
   crop_size: 224
   stride: 224
   mask_cloud: False
+
+logger:
+  use_wandb: true
+  project: instageo
+  entity: null
+  name: null
+  group: null
+  tags: []
+  notes: null

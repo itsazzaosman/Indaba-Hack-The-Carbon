@@ -193,6 +193,8 @@ class PrithviSegmentationModule(pl.LightningModule):
         self.learning_rate = learning_rate
         self.ignore_index = ignore_index
         self.weight_decay = weight_decay
+        # Save hyperparameters for loggers (e.g., Wandb)
+        self.save_hyperparameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Define the forward pass of the model.
@@ -600,6 +602,26 @@ def main(cfg: DictConfig) -> None:
         )
 
         logger = TensorBoardLogger(hydra_out_dir, name="instageo")
+        # Optionally add Wandb logger
+        try:
+            if "logger" in cfg and cfg.logger.use_wandb:
+                from pytorch_lightning.loggers import WandbLogger
+                wandb_logger = WandbLogger(
+                    project=cfg.logger.project,
+                    entity=cfg.logger.entity,
+                    save_dir=hydra_out_dir,
+                    name=cfg.logger.name,
+                    group=cfg.logger.group,
+                    tags=cfg.logger.tags if cfg.logger.tags else None,
+                    notes=cfg.logger.notes,
+                )
+                # log full config to wandb
+                wandb_logger.experiment.config.update(
+                    OmegaConf.to_container(cfg, resolve=True), allow_val_change=True
+                )
+                logger = [logger, wandb_logger]
+        except Exception as e:
+            log.warning(f"Wandb logger not initialized: {e}")
 
         trainer = pl.Trainer(
             accelerator=get_device(),

@@ -273,6 +273,10 @@ def main(cfg: DictConfig) -> None:
     Returns:
         None.
     """
+    # Set memory optimization environment variables
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+    
     log.info(f"Script: {__file__}")
     log.info(f"Imported hydra config:\n{OmegaConf.to_yaml(cfg)}")
 
@@ -400,12 +404,22 @@ def main(cfg: DictConfig) -> None:
 
             loggers.append(wandb_logger)
 
+        # Calculate gradient accumulation steps to maintain effective batch size
+        # Original batch_size: 12, new batch_size: 4, so accumulate_grad_batches = 3
+        effective_batch_size = 12  # Original desired batch size
+        actual_batch_size = cfg.train.batch_size
+        accumulate_grad_batches = max(1, effective_batch_size // actual_batch_size)
+        
         trainer = pl.Trainer(
             accelerator=get_device(),
+            devices=8,  # Use all 8 A100s
+            strategy="ddp",  # Distributed Data Parallel
             max_epochs=cfg.train.num_epochs,
             callbacks=[checkpoint_callback, lr_monitor],
             logger=loggers,
-            log_every_n_steps=1  # Ensure frequent logging for metrics visibility
+            log_every_n_steps=1,  # Ensure frequent logging for metrics visibility
+            precision="16-mixed",  # Use mixed precision to save memory
+            accumulate_grad_batches=accumulate_grad_batches,  # Gradient accumulation to maintain effective batch size
         )
 
         # Log the artifact only after trainer is initialized (for global_rank check)

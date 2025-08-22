@@ -274,6 +274,17 @@ class PrithviSeg(nn.Module):
         try:
             model = ViTEncoder(**model_args)
             logging.info(f"Successfully created ViTEncoder with args: {model_args}")
+            
+            # Enable memory efficient attention if available
+            if hasattr(model, 'use_memory_efficient_attention'):
+                model.use_memory_efficient_attention = True
+                logging.info("Enabled memory efficient attention")
+                
+            # Enable gradient checkpointing to save memory
+            if hasattr(model, 'gradient_checkpointing'):
+                model.gradient_checkpointing = True
+                logging.info("Enabled gradient checkpointing")
+                
         except Exception as e:
             logging.error(f"Failed to create ViTEncoder with args: {model_args}")
             logging.error(f"Error: {e}")

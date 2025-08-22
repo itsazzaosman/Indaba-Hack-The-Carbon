@@ -350,9 +350,7 @@ class PrithviSegmentationModule(pl.LightningModule):
 
     def configure_optimizers(
         self,
-    ) -> Tuple[
-        List[torch.optim.Optimizer], List[torch.optim.lr_scheduler._LRScheduler]
-    ]:
+    ):
         """Configure the model's optimizers and learning rate schedulers.
 
         Returns:
@@ -363,7 +361,7 @@ class PrithviSegmentationModule(pl.LightningModule):
             self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=100, eta_min=0
+            optimizer, T_max=40, eta_min=0
         )
         return [optimizer], [scheduler]
 
@@ -916,7 +914,7 @@ class PrithviRegressionModule(pl.LightningModule):
 
     def configure_optimizers(
         self,
-    ) -> Tuple[List[torch.optim.Optimizer], List[torch.optim.lr_scheduler]]:
+    ):
         """Configure the model's optimizers and learning rate schedulers.
 
         Returns:
@@ -927,7 +925,7 @@ class PrithviRegressionModule(pl.LightningModule):
             self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay
         )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=100, eta_min=0
+            optimizer, T_max=40, eta_min=0
         )
         return [optimizer], [scheduler]
 

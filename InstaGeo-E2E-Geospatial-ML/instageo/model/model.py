@@ -386,19 +386,61 @@ class PrithviSeg(nn.Module):
 
         # Calculate embedding dimensions for segmentation head
         base_embed_dim = model_args["embed_dim"]
-        embed_dims = [
-            (base_embed_dim * model_args["num_frames"]) // (2**i)
-            for i in range(5)
-        ]
+        
+        # Calculate the expected feature map size from the backbone
+        patch_size = model_args["patch_size"]
+        expected_feature_size = image_size // patch_size
+        logging.info(f"Image size: {image_size}, Patch size: {patch_size}")
+        logging.info(f"Expected feature map size: {expected_feature_size}x{expected_feature_size}")
+        
+        # Validate that the image size is divisible by patch size
+        if image_size % patch_size != 0:
+            logging.warning(f"Image size {image_size} is not divisible by patch size {patch_size}")
+            # Round down to ensure compatibility
+            expected_feature_size = image_size // patch_size
+            logging.info(f"Adjusted feature map size: {expected_feature_size}x{expected_feature_size}")
+        
+        # Calculate the required upscaling to reach the target image size
+        target_size = image_size
+        current_size = expected_feature_size
+        upscaling_steps = []
+        
+        while current_size < target_size:
+            upscaling_steps.append(current_size)
+            current_size *= 2
+            
+        logging.info(f"Upscaling steps: {upscaling_steps} -> {target_size}")
+        
+        # Validate upscaling calculation
+        if not upscaling_steps:
+            logging.warning("No upscaling steps needed - feature size already matches target")
+            upscaling_steps = [expected_feature_size]
+        elif upscaling_steps[-1] * 2 < target_size:
+            logging.warning(f"Upscaling may not reach target size: {upscaling_steps[-1] * 2} < {target_size}")
+        
+        # Create embedding dimensions for the segmentation head
+        embed_dims = [base_embed_dim * model_args["num_frames"]]
+        for i in range(len(upscaling_steps)):
+            embed_dims.append(embed_dims[-1] // 2)
+            
+        # Ensure we have enough channels for the final output
+        embed_dims.append(num_classes)
         
         logging.info(f"Segmentation head embed_dims: {embed_dims}")
         
-        self.segmentation_head = nn.Sequential(
-            *[upscaling_block(embed_dims[i], embed_dims[i + 1]) for i in range(4)],
+        # Create upscaling blocks with the correct number of steps
+        upscaling_blocks = []
+        for i in range(len(upscaling_steps)):
+            upscaling_blocks.append(upscaling_block(embed_dims[i], embed_dims[i + 1]))
+            
+        # Add final output layer
+        upscaling_blocks.append(
             nn.Conv2d(
-                kernel_size=1, in_channels=embed_dims[-1], out_channels=num_classes
-            ),
+                kernel_size=1, in_channels=embed_dims[-2], out_channels=num_classes
+            )
         )
+        
+        self.segmentation_head = nn.Sequential(*upscaling_blocks)
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
         """Define the forward pass of the model.
@@ -409,15 +451,44 @@ class PrithviSeg(nn.Module):
         Returns:
             torch.Tensor: Output tensor after image segmentation.
         """
+        logging.info(f"Input image shape: {img.shape}")
+        logging.info(f"Expected image size: {self.model_args['img_size']}")
+        
+        # Validate input size
+        if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
+            logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        
         features = self.prithvi_600M_backbone(img)
+        logging.info(f"Backbone output shape: {features.shape}")
+        
         # drop cls token
         reshaped_features = features[:, 1:, :]
+        logging.info(f"Features after dropping cls token: {reshaped_features.shape}")
+        
         feature_img_side_length = int(
             np.sqrt(reshaped_features.shape[1] // self.model_args["num_frames"])
         )
+        logging.info(f"Calculated feature image side length: {feature_img_side_length}")
+        
         reshaped_features = reshaped_features.permute(0, 2, 1).reshape(
             features.shape[0], -1, feature_img_side_length, feature_img_side_length
         )
+        logging.info(f"Reshaped features: {reshaped_features.shape}")
 
         out = self.segmentation_head(reshaped_features)
+        logging.info(f"Segmentation head output shape: {out.shape}")
+        
+        # Validate output size
+        expected_size = (img.shape[0], num_classes, img.shape[2], img.shape[3])
+        logging.info(f"Expected output size: {expected_size}")
+        
+        if out.shape != expected_size:
+            logging.warning(f"Output shape mismatch: got {out.shape}, expected {expected_size}")
+            # Resize output to match expected size if needed
+            if out.shape[2:] != expected_size[2:]:
+                out = torch.nn.functional.interpolate(
+                    out, size=expected_size[2:], mode='bilinear', align_corners=False
+                )
+                logging.info(f"Resized output to {out.shape}")
+        
         return out

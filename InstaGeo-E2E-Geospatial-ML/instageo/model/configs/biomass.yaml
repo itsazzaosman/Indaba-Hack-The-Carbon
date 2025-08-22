@@ -9,8 +9,8 @@ mode: train # stats, train, sliding_inference or chip_inference
 is_reg_task: True
 
 train:
-  learning_rate: 0.01
-  num_epochs: 40
+  learning_rate: 0.001
+  num_epochs: 44
   batch_size: 4  # Reduced from 12 to fit in memory
   class_weights: null
   ignore_index: -1
@@ -25,7 +25,7 @@ train:
 
 
 model:
-  freeze_backbone: False
+  freeze_backbone: true
   num_classes: 1
   depth: null
 

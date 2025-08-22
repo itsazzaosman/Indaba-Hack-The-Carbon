@@ -131,7 +131,7 @@ class PrithviSeg(nn.Module):
         """Initialize the PrithviSeg model.
 
         This model is designed for image segmentation tasks on remote sensing data.
-        It loads Prithvi configuration and weights and sets up a ViTEncoder backbone
+        It loads Prithvi-EO-2.0-600M configuration and weights and sets up a ViTEncoder backbone
         along with a segmentation head.
 
         Args:
@@ -145,14 +145,14 @@ class PrithviSeg(nn.Module):
         super().__init__()
         weights_dir = Path.home() / ".instageo" / "prithvi"
         weights_dir.mkdir(parents=True, exist_ok=True)
-        weights_path = weights_dir / "Prithvi_EO_V1_100M.pt"
+        weights_path = weights_dir / "Prithvi_EO_V2_600M.pt"
         cfg_path = weights_dir / "config.yaml"
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-1.0-100M/resolve/main/Prithvi_EO_V1_100M.pt?download=true",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/Prithvi_EO_V2_600M.pt?download=true",  # noqa
             weights_path,
         )
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-100M/raw/main/config.yaml",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/raw/main/config.yaml",  # noqa
             cfg_path,
         )
         checkpoint = torch.load(weights_path, map_location="cpu")
@@ -196,7 +196,7 @@ class PrithviSeg(nn.Module):
         )
         _ = model.load_state_dict(filtered_checkpoint_state_dict)
 
-        self.prithvi_100M_backbone = model
+        self.prithvi_600M_backbone = model
 
         def upscaling_block(in_channels: int, out_channels: int) -> nn.Module:
             """Upscaling block.
@@ -247,7 +247,7 @@ class PrithviSeg(nn.Module):
         Returns:
             torch.Tensor: Output tensor after image segmentation.
         """
-        features = self.prithvi_100M_backbone(img)
+        features = self.prithvi_600M_backbone(img)
         # drop cls token
         reshaped_features = features[:, 1:, :]
         feature_img_side_length = int(

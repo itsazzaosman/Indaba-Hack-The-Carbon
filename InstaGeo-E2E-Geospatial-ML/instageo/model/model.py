@@ -29,6 +29,7 @@ import torch
 import torch.nn as nn
 import json  # type: ignore
 from absl import logging
+logging.set_verbosity(logging.WARNING)  # Only show warnings and errors
 
 from instageo.model.Prithvi import ViTEncoder, get_3d_sincos_pos_embed
 

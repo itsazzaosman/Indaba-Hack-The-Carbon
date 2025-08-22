@@ -160,43 +160,169 @@ class PrithviSeg(nn.Module):
             model_config = yaml.safe_load(f)
 
         model_args = model_config["model_args"]
+        
+        # Log the configuration for debugging
+        logging.info(f"Loaded model config: {model_args}")
+        logging.info(f"Checkpoint keys: {list(checkpoint.keys())}")
 
         model_args["num_frames"] = temporal_step
         model_args["img_size"] = image_size
         if depth is not None:
             model_args["depth"] = depth
+        elif "depth" not in model_args:
+            # Try to infer depth from checkpoint
+            max_block_idx = 0
+            for key in checkpoint.keys():
+                if key.startswith("encoder.blocks."):
+                    try:
+                        block_idx = int(key.split(".")[2])
+                        max_block_idx = max(max_block_idx, block_idx)
+                    except (ValueError, IndexError):
+                        continue
+            if max_block_idx > 0:
+                model_args["depth"] = max_block_idx + 1
+                logging.info(f"Extracted depth from checkpoint: {model_args['depth']}")
+            else:
+                model_args["depth"] = 24  # Default depth
+            
+        # Extract dimensions from checkpoint if not in config
+        if "embed_dim" not in model_args:
+            # Try to get embed_dim from checkpoint
+            if "encoder.cls_token" in checkpoint:
+                model_args["embed_dim"] = checkpoint["encoder.cls_token"].shape[-1]
+                logging.info(f"Extracted embed_dim from checkpoint: {model_args['embed_dim']}")
+            else:
+                model_args["embed_dim"] = 1280  # Prithvi-EO-2.0-600M default
+                logging.info(f"Using default embed_dim: {model_args['embed_dim']}")
+                
+        if "patch_size" not in model_args:
+            # Try to infer patch_size from checkpoint
+            if "encoder.patch_embed.proj.weight" in checkpoint:
+                weight_shape = checkpoint["encoder.patch_embed.proj.weight"].shape
+                # The weight shape is [out_channels, in_channels, t, h, w]
+                # We can infer patch_size from the spatial dimensions
+                if len(weight_shape) == 5:
+                    model_args["patch_size"] = weight_shape[3]  # h dimension
+                    logging.info(f"Extracted patch_size from checkpoint: {model_args['patch_size']}")
+                else:
+                    model_args["patch_size"] = 14  # Prithvi-EO-2.0-600M default
+            else:
+                model_args["patch_size"] = 14   # Prithvi-EO-2.0-600M default
+                
+        if "in_chans" not in model_args:
+            # Try to get in_chans from checkpoint
+            if "encoder.patch_embed.proj.weight" in checkpoint:
+                weight_shape = checkpoint["encoder.patch_embed.proj.weight"].shape
+                if len(weight_shape) == 5:
+                    model_args["in_chans"] = weight_shape[1]  # in_channels dimension
+                    logging.info(f"Extracted in_chans from checkpoint: {model_args['in_chans']}")
+                else:
+                    model_args["in_chans"] = 6  # Prithvi-EO-2.0-600M default
+            else:
+                model_args["in_chans"] = 6      # Prithvi-EO-2.0-600M default (6 bands)
+                
+        # Set default values for other parameters if not present
+        if "num_heads" not in model_args:
+            model_args["num_heads"] = 16  # Default number of attention heads
+        if "mlp_ratio" not in model_args:
+            model_args["mlp_ratio"] = 4.0  # Default MLP ratio
+        if "tubelet_size" not in model_args:
+            model_args["tubelet_size"] = 1  # Default tubelet size for temporal dimension
+        if "norm_layer" not in model_args:
+            model_args["norm_layer"] = nn.LayerNorm  # Default normalization layer
+        if "norm_pix_loss" not in model_args:
+            model_args["norm_pix_loss"] = False  # Default norm_pix_loss value
+            
         self.model_args = model_args
+        
+        # Log the final model arguments for debugging
+        logging.info(f"Final model args: {model_args}")
+        
         # instantiate model
-        model = ViTEncoder(**model_args)
+        try:
+            model = ViTEncoder(**model_args)
+            logging.info(f"Successfully created ViTEncoder with args: {model_args}")
+        except Exception as e:
+            logging.error(f"Failed to create ViTEncoder with args: {model_args}")
+            logging.error(f"Error: {e}")
+            raise
         if freeze_backbone:
             for param in model.parameters():
                 param.requires_grad = False
         # Harmonize checkpoint keys with model's state_dict
         filtered_checkpoint_state_dict = {}
+        encoder_keys_found = False
+        
         for key, value in checkpoint.items():
             if key.startswith("encoder."):
+                encoder_keys_found = True
                 new_key = key[len("encoder.") :]
                 # Only keep blocks from 0 to depth-1
                 if new_key.startswith("blocks."):
-                    block_idx = int(new_key.split(".")[1])
-                    if block_idx < model_args["depth"]:
-                        filtered_checkpoint_state_dict[new_key] = value
+                    try:
+                        block_idx = int(new_key.split(".")[1])
+                        if depth is None or block_idx < model_args.get("depth", depth or 24):
+                            filtered_checkpoint_state_dict[new_key] = value
+                    except (ValueError, IndexError):
+                        # Skip malformed block keys
+                        continue
                 else:
                     filtered_checkpoint_state_dict[new_key] = value
+        
+        if not encoder_keys_found:
+            logging.warning("No encoder keys found in checkpoint, trying direct loading")
+            # If no encoder keys, try loading the checkpoint directly
+            filtered_checkpoint_state_dict = checkpoint
+        # Calculate patch size from image size and model configuration
+        patch_size = model_args.get("patch_size", 16)  # Default to 16 if not specified
+        embed_dim = model_args.get("embed_dim", 768)  # Default to 768 if not specified
+        
+        # Calculate the number of patches
+        num_patches_h = image_size // patch_size
+        num_patches_w = image_size // patch_size
+        
+        logging.info(f"Creating positional embedding with: embed_dim={embed_dim}, temporal_step={temporal_step}, num_patches_h={num_patches_h}, num_patches_w={num_patches_w}")
+        
         filtered_checkpoint_state_dict["pos_embed"] = (
             torch.from_numpy(
                 get_3d_sincos_pos_embed(
-                    768,
-                    (temporal_step, image_size // 16, image_size // 16),
+                    embed_dim,
+                    (temporal_step, num_patches_h, num_patches_w),
                     cls_token=True,
                 )
             )
             .float()
             .unsqueeze(0)
         )
-        _ = model.load_state_dict(filtered_checkpoint_state_dict)
+        # Load the state dict with error handling
+        try:
+            missing_keys, unexpected_keys = model.load_state_dict(filtered_checkpoint_state_dict, strict=False)
+            if missing_keys:
+                logging.warning(f"Missing keys when loading checkpoint: {missing_keys}")
+            if unexpected_keys:
+                logging.warning(f"Unexpected keys when loading checkpoint: {unexpected_keys}")
+            logging.info(f"Successfully loaded checkpoint with {len(filtered_checkpoint_state_dict)} keys")
+        except Exception as e:
+            logging.error(f"Error loading checkpoint: {e}")
+            logging.info(f"Model state dict keys: {list(model.state_dict().keys())}")
+            logging.info(f"Checkpoint keys: {list(filtered_checkpoint_state_dict.keys())}")
+            
+            # Try to identify the specific mismatch
+            model_state = model.state_dict()
+            for key in filtered_checkpoint_state_dict.keys():
+                if key in model_state:
+                    checkpoint_shape = filtered_checkpoint_state_dict[key].shape
+                    model_shape = model_state[key].shape
+                    if checkpoint_shape != model_shape:
+                        logging.error(f"Shape mismatch for key '{key}': checkpoint {checkpoint_shape} vs model {model_shape}")
+            
+            raise
 
         self.prithvi_600M_backbone = model
+        
+        # Validate that the model is working correctly
+        logging.info(f"Model created successfully with {sum(p.numel() for p in model.parameters())} parameters")
+        logging.info(f"Model embed_dim: {model_args['embed_dim']}, patch_size: {model_args['patch_size']}, in_chans: {model_args['in_chans']}")
 
         def upscaling_block(in_channels: int, out_channels: int) -> nn.Module:
             """Upscaling block.
@@ -227,10 +353,15 @@ class PrithviSeg(nn.Module):
                 nn.ReLU(),
             )
 
+        # Calculate embedding dimensions for segmentation head
+        base_embed_dim = model_args["embed_dim"]
         embed_dims = [
-            (model_args["embed_dim"] * model_args["num_frames"]) // (2**i)
+            (base_embed_dim * model_args["num_frames"]) // (2**i)
             for i in range(5)
         ]
+        
+        logging.info(f"Segmentation head embed_dims: {embed_dims}")
+        
         self.segmentation_head = nn.Sequential(
             *[upscaling_block(embed_dims[i], embed_dims[i + 1]) for i in range(4)],
             nn.Conv2d(

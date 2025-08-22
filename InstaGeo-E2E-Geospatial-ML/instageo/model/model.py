@@ -152,7 +152,7 @@ class PrithviSeg(nn.Module):
             weights_path,
         )
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/config.jsonfi",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/config.json",  # noqa
             cfg_path,
         )
         checkpoint = torch.load(weights_path, map_location="cpu")

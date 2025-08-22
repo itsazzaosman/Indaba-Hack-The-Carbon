@@ -314,7 +314,7 @@ class PrithviSeg(nn.Module):
         num_patches_h = image_size // patch_size
         num_patches_w = image_size // patch_size
         
-        logging.info(f"Creating positional embedding with: embed_dim={embed_dim}, temporal_step={temporal_step}, num_patches_h={num_patches_h}, num_patches_w={num_patches_w}")
+        # logging.info(f"Creating positional embedding with: embed_dim={embed_dim}, temporal_step={temporal_step}, num_patches_h={num_patches_h}, num_patches_w={num_patches_w}")
         
         filtered_checkpoint_state_dict["pos_embed"] = (
             torch.from_numpy(
@@ -446,54 +446,54 @@ class PrithviSeg(nn.Module):
         Returns:
             torch.Tensor: Output tensor after image segmentation.
         """
-        logging.info(f"Input image shape: {img.shape}")
-        logging.info(f"Expected image size: {self.model_args['img_size']}")
+        # logging.info(f"Input image shape: {img.shape}")
+        # logging.info(f"Expected image size: {self.model_args['img_size']}")
         
         # Validate input size based on tensor dimensions
-        if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
-            logging.info(f"5D input detected: batch={img.shape[0]}, channels={img.shape[1]}, temporal={img.shape[2]}, height={img.shape[3]}, width={img.shape[4]}")
-            if img.shape[3] != self.model_args['img_size'] or img.shape[4] != self.model_args['img_size']:
-                logging.warning(f"Input spatial size mismatch: got {img.shape[3]}x{img.shape[4]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
-        else:  # [batch, channels, height, width]
-            logging.info(f"4D input detected: batch={img.shape[0]}, channels={img.shape[1]}, height={img.shape[2]}, width={img.shape[3]}")
-            if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
-                logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        # if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
+        #     logging.info(f"5D input detected: batch={img.shape[0]}, channels={img.shape[1]}, temporal={img.shape[2]}, height={img.shape[3]}, width={img.shape[4]}")
+        #     if img.shape[3] != self.model_args['img_size'] or img.shape[4] != self.model_args['img_size']:
+        #         logging.warning(f"Input spatial size mismatch: got {img.shape[3]}x{img.shape[4]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        # else:  # [batch, channels, height, width]
+        #     logging.info(f"4D input detected: batch={img.shape[0]}, channels={img.shape[1]}, height={img.shape[2]}, width={img.shape[3]}")
+        #     if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
+        #         logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
         
         features = self.prithvi_600M_backbone(img)
-        logging.info(f"Backbone output shape: {features.shape}")
+        # logging.info(f"Backbone output shape: {features.shape}")
         
         # drop cls token
         reshaped_features = features[:, 1:, :]
-        logging.info(f"Features after dropping cls token: {reshaped_features.shape}")
+        # logging.info(f"Features after dropping cls token: {reshaped_features.shape}")
         
         # Calculate feature dimensions
         total_features = reshaped_features.shape[1]
         num_frames = self.model_args["num_frames"]
         features_per_frame = total_features // num_frames
         
-        logging.info(f"Total features: {total_features}, Num frames: {num_frames}, Features per frame: {features_per_frame}")
+        # logging.info(f"Total features: {total_features}, Num frames: {num_frames}, Features per frame: {features_per_frame}")
         
         feature_img_side_length = int(np.sqrt(features_per_frame))
-        logging.info(f"Calculated feature image side length: {feature_img_side_length}")
+        # logging.info(f"Calculated feature image side length: {feature_img_side_length}")
         
         # Validate the calculation
         expected_features = feature_img_side_length ** 2
-        if expected_features != features_per_frame:
-            logging.warning(f"Feature calculation mismatch: {expected_features} != {features_per_frame}")
-            logging.warning(f"Using {feature_img_side_length}x{feature_img_side_length} = {expected_features} features")
+        # if expected_features != features_per_frame:
+        #     logging.warning(f"Feature calculation mismatch: {expected_features} != {features_per_frame}")
+        #     logging.warning(f"Using {feature_img_side_length}x{feature_img_side_length} = {expected_features} features")
         
         reshaped_features = reshaped_features.permute(0, 2, 1).reshape(
             features.shape[0], -1, feature_img_side_length, feature_img_side_length
         )
-        logging.info(f"Reshaped features: {reshaped_features.shape}")
+        # logging.info(f"Reshaped features: {reshaped_features.shape}")
         
         # Validate reshaped features
         if len(reshaped_features.shape) != 4:
-            logging.error(f"Reshaped features has wrong shape: {reshaped_features.shape}")
+            # logging.error(f"Reshaped features has wrong shape: {reshaped_features.shape}")
             raise ValueError(f"Reshaped features should be 4D, got {len(reshaped_features.shape)}D")
 
         out = self.segmentation_head(reshaped_features)
-        logging.info(f"Segmentation head output shape: {out.shape}")
+        # logging.info(f"Segmentation head output shape: {out.shape}")
         
         # Validate output size - use the spatial dimensions from the input
         if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
@@ -501,7 +501,7 @@ class PrithviSeg(nn.Module):
         else:  # [batch, channels, height, width]
             expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
             
-        logging.info(f"Expected output size: {expected_size}")
+        # logging.info(f"Expected output size: {expected_size}")
         
         # Ensure output has 4 dimensions
         if len(out.shape) != 4:
@@ -519,5 +519,5 @@ class PrithviSeg(nn.Module):
                 )
                 logging.info(f"Resized output to {out.shape}")
         
-        logging.info(f"Final output shape: {out.shape}")
+        # logging.info(f"Final output shape: {out.shape}")
         return out

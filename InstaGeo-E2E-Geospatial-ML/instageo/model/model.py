@@ -27,7 +27,7 @@ import numpy as np
 import requests  # type: ignore
 import torch
 import torch.nn as nn
-import yaml  # type: ignore
+import json  # type: ignore
 from absl import logging
 
 from instageo.model.Prithvi import ViTEncoder, get_3d_sincos_pos_embed
@@ -146,27 +146,58 @@ class PrithviSeg(nn.Module):
         weights_dir = Path.home() / ".instageo" / "prithvi"
         weights_dir.mkdir(parents=True, exist_ok=True)
         weights_path = weights_dir / "Prithvi_EO_V2_600M.pt"
-        cfg_path = weights_dir / "config.yaml"
+        cfg_path = weights_dir / "config.json"
         download_file(
             "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/Prithvi_EO_V2_600M.pt?download=true",  # noqa
             weights_path,
         )
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/raw/main/config.yaml",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/config.jsonfi",  # noqa
             cfg_path,
         )
         checkpoint = torch.load(weights_path, map_location="cpu")
         with open(cfg_path) as f:
-            model_config = yaml.safe_load(f)
+            model_config = json.load(f)
 
-        model_args = model_config["model_args"]
+        # Extract model arguments from the JSON config structure
+        if "pretrained_cfg" in model_config:
+            # New Prithvi-EO-2.0-600M JSON format
+            pretrained_cfg = model_config["pretrained_cfg"]
+            model_args = {
+                "img_size": pretrained_cfg.get("img_size", 224),
+                "num_frames": pretrained_cfg.get("num_frames", 4),
+                "patch_size": pretrained_cfg.get("patch_size", [1, 14, 14])[1] if isinstance(pretrained_cfg.get("patch_size"), list) else pretrained_cfg.get("patch_size", 14),  # Extract spatial patch size
+                "in_chans": pretrained_cfg.get("in_chans", 6),
+                "embed_dim": pretrained_cfg.get("embed_dim", 1280),
+                "depth": pretrained_cfg.get("depth", 32),
+                "num_heads": pretrained_cfg.get("num_heads", 16),
+                "mlp_ratio": pretrained_cfg.get("mlp_ratio", 4),
+                "norm_pix_loss": pretrained_cfg.get("norm_pix_loss", False),
+                "decoder_embed_dim": pretrained_cfg.get("decoder_embed_dim", 512),
+                "decoder_depth": pretrained_cfg.get("decoder_depth", 8),
+                "decoder_num_heads": pretrained_cfg.get("decoder_num_heads", 16),
+            }
+        elif "model_args" in model_config:
+            # Legacy YAML format
+            model_args = model_config["model_args"]
+        else:
+            # Fallback to defaults
+            model_args = {}
         
         # Log the configuration for debugging
-        logging.info(f"Loaded model config: {model_args}")
+        logging.info(f"Loaded model config: {model_config}")
+        logging.info(f"Extracted model args: {model_args}")
         logging.info(f"Checkpoint keys: {list(checkpoint.keys())}")
+        
+        # Log key parameters for verification
+        if "pretrained_cfg" in model_config:
+            pretrained_cfg = model_config["pretrained_cfg"]
+            logging.info(f"Prithvi-EO-2.0-600M Config: embed_dim={pretrained_cfg.get('embed_dim')}, patch_size={pretrained_cfg.get('patch_size')}, depth={pretrained_cfg.get('depth')}")
 
+        # Override config values with user-specified parameters
         model_args["num_frames"] = temporal_step
         model_args["img_size"] = image_size
+        
         if depth is not None:
             model_args["depth"] = depth
         elif "depth" not in model_args:
@@ -183,7 +214,7 @@ class PrithviSeg(nn.Module):
                 model_args["depth"] = max_block_idx + 1
                 logging.info(f"Extracted depth from checkpoint: {model_args['depth']}")
             else:
-                model_args["depth"] = 24  # Default depth
+                model_args["depth"] = 32  # Prithvi-EO-2.0-600M default depth
             
         # Extract dimensions from checkpoint if not in config
         if "embed_dim" not in model_args:

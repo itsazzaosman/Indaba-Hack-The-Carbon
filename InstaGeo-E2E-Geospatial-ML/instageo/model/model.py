@@ -403,34 +403,25 @@ class PrithviSeg(nn.Module):
             logging.info(f"Adjusted feature map size: {expected_feature_size}x{expected_feature_size}")
             logging.info(f"This means we'll have {256 - (expected_feature_size * patch_size)} pixels that need special handling")
         
-        # Calculate the required upscaling to reach the target image size
+        # Use a simpler approach: always use 2x upscaling and interpolate to target size
         target_size = image_size
         current_size = expected_feature_size
         upscaling_steps = []
         
+        # Build upscaling steps using powers of 2
         while current_size < target_size:
             upscaling_steps.append(current_size)
             current_size *= 2
             
         logging.info(f"Upscaling steps: {upscaling_steps} -> {target_size}")
         
-        # Validate upscaling calculation
-        if not upscaling_steps:
-            logging.warning("No upscaling steps needed - feature size already matches target")
-            upscaling_steps = [expected_feature_size]
-        elif upscaling_steps[-1] * 2 < target_size:
-            logging.warning(f"Upscaling may not reach target size: {upscaling_steps[-1] * 2} < {target_size}")
-            # Add one more step to ensure we reach or exceed the target
-            upscaling_steps.append(upscaling_steps[-1] * 2)
-            logging.info(f"Added extra upscaling step: {upscaling_steps}")
-        
         # Final validation of upscaling
         final_size = upscaling_steps[-1] * 2 if upscaling_steps else expected_feature_size
         logging.info(f"Final upscaled size will be: {final_size}x{final_size}")
         if final_size < target_size:
-            logging.warning(f"Warning: Final size {final_size} may be smaller than target {target_size}")
+            logging.warning(f"Warning: Final size {final_size} will be smaller than target {target_size}")
         elif final_size > target_size:
-            logging.info(f"Final size {final_size} exceeds target {target_size} - will be resized to match")
+            logging.info(f"Final size {final_size} exceeds target {target_size} - will be interpolated to match")
         
         # Create embedding dimensions for the segmentation head
         embed_dims = [base_embed_dim * model_args["num_frames"]]
@@ -455,6 +446,15 @@ class PrithviSeg(nn.Module):
         )
         upscaling_blocks.append(final_conv)
         logging.info(f"Created final conv layer: {embed_dims[-2]} -> {self.num_classes} channels")
+        
+        # Add final interpolation layer to ensure correct output size
+        final_interpolation = nn.Upsample(
+            size=(image_size, image_size), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        upscaling_blocks.append(final_interpolation)
+        logging.info(f"Added final interpolation layer to ensure output size: {image_size}x{image_size}")
         
         self.segmentation_head = nn.Sequential(*upscaling_blocks)
         logging.info(f"Created segmentation head with {len(upscaling_blocks)} layers")
@@ -482,15 +482,31 @@ class PrithviSeg(nn.Module):
         reshaped_features = features[:, 1:, :]
         logging.info(f"Features after dropping cls token: {reshaped_features.shape}")
         
-        feature_img_side_length = int(
-            np.sqrt(reshaped_features.shape[1] // self.model_args["num_frames"])
-        )
+        # Calculate feature dimensions
+        total_features = reshaped_features.shape[1]
+        num_frames = self.model_args["num_frames"]
+        features_per_frame = total_features // num_frames
+        
+        logging.info(f"Total features: {total_features}, Num frames: {num_frames}, Features per frame: {features_per_frame}")
+        
+        feature_img_side_length = int(np.sqrt(features_per_frame))
         logging.info(f"Calculated feature image side length: {feature_img_side_length}")
+        
+        # Validate the calculation
+        expected_features = feature_img_side_length ** 2
+        if expected_features != features_per_frame:
+            logging.warning(f"Feature calculation mismatch: {expected_features} != {features_per_frame}")
+            logging.warning(f"Using {feature_img_side_length}x{feature_img_side_length} = {expected_features} features")
         
         reshaped_features = reshaped_features.permute(0, 2, 1).reshape(
             features.shape[0], -1, feature_img_side_length, feature_img_side_length
         )
         logging.info(f"Reshaped features: {reshaped_features.shape}")
+        
+        # Validate reshaped features
+        if len(reshaped_features.shape) != 4:
+            logging.error(f"Reshaped features has wrong shape: {reshaped_features.shape}")
+            raise ValueError(f"Reshaped features should be 4D, got {len(reshaped_features.shape)}D")
 
         out = self.segmentation_head(reshaped_features)
         logging.info(f"Segmentation head output shape: {out.shape}")
@@ -499,13 +515,21 @@ class PrithviSeg(nn.Module):
         expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
         logging.info(f"Expected output size: {expected_size}")
         
+        # Ensure output has 4 dimensions
+        if len(out.shape) != 4:
+            logging.error(f"Output has wrong number of dimensions: {len(out.shape)}, expected 4")
+            raise ValueError(f"Output shape {out.shape} is invalid - expected 4D tensor")
+        
+        # Check if output matches expected size
         if out.shape != expected_size:
             logging.warning(f"Output shape mismatch: got {out.shape}, expected {expected_size}")
             # Resize output to match expected size if needed
             if out.shape[2:] != expected_size[2:]:
+                logging.info(f"Resizing output from {out.shape[2:]} to {expected_size[2:]}")
                 out = torch.nn.functional.interpolate(
                     out, size=expected_size[2:], mode='bilinear', align_corners=False
                 )
                 logging.info(f"Resized output to {out.shape}")
         
+        logging.info(f"Final output shape: {out.shape}")
         return out

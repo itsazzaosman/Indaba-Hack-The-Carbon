@@ -63,13 +63,17 @@ echo "Launching distributed training with 8 GPUs..."
 echo ""
 
 # Launch distributed training using torchrun
+# Get the absolute path to the current directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 torchrun \
     --nproc_per_node=8 \
     --nnodes=1 \
     --node_rank=0 \
     --master_addr=localhost \
     --master_port=12355 \
-    train_8gpu.py \
+    "$SCRIPT_DIR/train_8gpu.py" \
     --train-csv "$TRAIN_CSV" \
     --val-csv "$VAL_CSV" \
     --root-dir "$ROOT_DIR" \

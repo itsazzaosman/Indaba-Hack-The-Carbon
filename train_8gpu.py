@@ -251,6 +251,10 @@ def calculate_metrics(predictions: List[float], targets: List[float]) -> Dict[st
     }
 
 def main():
+    # Print current working directory and script location for debugging
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Script location: {os.path.abspath(__file__)}")
+    
     parser = argparse.ArgumentParser(description='8-GPU XGBoost Biomass Training')
     parser.add_argument('--train-csv', type=str, required=True, help='Path to training CSV')
     parser.add_argument('--val-csv', type=str, required=True, help='Path to validation CSV')
@@ -264,6 +268,9 @@ def main():
     parser.add_argument('--save-dir', type=str, default='./checkpoints', help='Checkpoint save directory')
     
     args = parser.parse_args()
+    
+    # Print arguments for debugging
+    print(f"Arguments: {args}")
     
     # Setup distributed training
     device, rank, world_size, local_rank = setup_distributed()

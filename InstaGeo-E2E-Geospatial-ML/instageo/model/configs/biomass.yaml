@@ -9,13 +9,19 @@ mode: train # stats, train, sliding_inference or chip_inference
 is_reg_task: True
 
 train:
-  learning_rate: 0.0001
-  num_epochs: 10
-  batch_size: 16
+  learning_rate: 0.001
+  num_epochs: 40
+  batch_size: 12
   class_weights: null
   ignore_index: -1
-  weight_decay: 0.01
+  weight_decay: 0.08
   log_transform: False
+    # WandB configuration
+  use_wandb: true  # Set to true to enable WandB logging
+  wandb_project: "instageo"  # WandB project name
+  wandb_run_name: "first run with defult config"  # Optional custom run name
+  wandb_log_model: false  # Whether to log model artifacts
+
 
 
 model:

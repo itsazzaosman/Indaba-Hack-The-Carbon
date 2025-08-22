@@ -265,6 +265,7 @@ class PrithviSeg(nn.Module):
             model_args["norm_pix_loss"] = False  # Default norm_pix_loss value
             
         self.model_args = model_args
+        self.num_classes = num_classes  # Store num_classes as instance variable
         
         # Log the final model arguments for debugging
         logging.info(f"Final model args: {model_args}")
@@ -395,10 +396,12 @@ class PrithviSeg(nn.Module):
         
         # Validate that the image size is divisible by patch size
         if image_size % patch_size != 0:
-            logging.warning(f"Image size {image_size} is not divisible by patch size {patch_size}")
+            logging.warning(f"Image size {image_size} is not perfectly divisible by patch size {patch_size}")
+            logging.warning(f"256 % 14 = {256 % 14} (remainder)")
             # Round down to ensure compatibility
             expected_feature_size = image_size // patch_size
             logging.info(f"Adjusted feature map size: {expected_feature_size}x{expected_feature_size}")
+            logging.info(f"This means we'll have {256 - (expected_feature_size * patch_size)} pixels that need special handling")
         
         # Calculate the required upscaling to reach the target image size
         target_size = image_size
@@ -417,6 +420,17 @@ class PrithviSeg(nn.Module):
             upscaling_steps = [expected_feature_size]
         elif upscaling_steps[-1] * 2 < target_size:
             logging.warning(f"Upscaling may not reach target size: {upscaling_steps[-1] * 2} < {target_size}")
+            # Add one more step to ensure we reach or exceed the target
+            upscaling_steps.append(upscaling_steps[-1] * 2)
+            logging.info(f"Added extra upscaling step: {upscaling_steps}")
+        
+        # Final validation of upscaling
+        final_size = upscaling_steps[-1] * 2 if upscaling_steps else expected_feature_size
+        logging.info(f"Final upscaled size will be: {final_size}x{final_size}")
+        if final_size < target_size:
+            logging.warning(f"Warning: Final size {final_size} may be smaller than target {target_size}")
+        elif final_size > target_size:
+            logging.info(f"Final size {final_size} exceeds target {target_size} - will be resized to match")
         
         # Create embedding dimensions for the segmentation head
         embed_dims = [base_embed_dim * model_args["num_frames"]]
@@ -424,23 +438,26 @@ class PrithviSeg(nn.Module):
             embed_dims.append(embed_dims[-1] // 2)
             
         # Ensure we have enough channels for the final output
-        embed_dims.append(num_classes)
+        embed_dims.append(self.num_classes)
         
         logging.info(f"Segmentation head embed_dims: {embed_dims}")
         
         # Create upscaling blocks with the correct number of steps
         upscaling_blocks = []
         for i in range(len(upscaling_steps)):
-            upscaling_blocks.append(upscaling_block(embed_dims[i], embed_dims[i + 1]))
+            block = upscaling_block(embed_dims[i], embed_dims[i + 1])
+            upscaling_blocks.append(block)
+            logging.info(f"Created upscaling block {i}: {embed_dims[i]} -> {embed_dims[i + 1]} channels")
             
         # Add final output layer
-        upscaling_blocks.append(
-            nn.Conv2d(
-                kernel_size=1, in_channels=embed_dims[-2], out_channels=num_classes
-            )
+        final_conv = nn.Conv2d(
+            kernel_size=1, in_channels=embed_dims[-2], out_channels=self.num_classes
         )
+        upscaling_blocks.append(final_conv)
+        logging.info(f"Created final conv layer: {embed_dims[-2]} -> {self.num_classes} channels")
         
         self.segmentation_head = nn.Sequential(*upscaling_blocks)
+        logging.info(f"Created segmentation head with {len(upscaling_blocks)} layers")
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
         """Define the forward pass of the model.
@@ -479,7 +496,7 @@ class PrithviSeg(nn.Module):
         logging.info(f"Segmentation head output shape: {out.shape}")
         
         # Validate output size
-        expected_size = (img.shape[0], num_classes, img.shape[2], img.shape[3])
+        expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
         logging.info(f"Expected output size: {expected_size}")
         
         if out.shape != expected_size:

@@ -184,15 +184,10 @@ class PrithviSeg(nn.Module):
             # Fallback to defaults
             model_args = {}
         
-        # Log the configuration for debugging
-        logging.info(f"Loaded model config: {model_config}")
-        logging.info(f"Extracted model args: {model_args}")
-        logging.info(f"Checkpoint keys: {list(checkpoint.keys())}")
-        
-        # Log key parameters for verification
+        # Log only essential configuration info
         if "pretrained_cfg" in model_config:
             pretrained_cfg = model_config["pretrained_cfg"]
-            logging.info(f"Prithvi-EO-2.0-600M Config: embed_dim={pretrained_cfg.get('embed_dim')}, patch_size={pretrained_cfg.get('patch_size')}, depth={pretrained_cfg.get('depth')}")
+         #   logging.info(f"Prithvi-EO-2.0-600M: embed_dim={pretrained_cfg.get('embed_dim')}, patch_size={pretrained_cfg.get('patch_size')}, depth={pretrained_cfg.get('depth')}")
 
         # Override config values with user-specified parameters
         model_args["num_frames"] = temporal_step
@@ -267,27 +262,21 @@ class PrithviSeg(nn.Module):
         self.model_args = model_args
         self.num_classes = num_classes  # Store num_classes as instance variable
         
-        # Log the final model arguments for debugging
-        logging.info(f"Final model args: {model_args}")
-        
         # instantiate model
         try:
             model = ViTEncoder(**model_args)
-            logging.info(f"Successfully created ViTEncoder with args: {model_args}")
+            logging.info(f"Created ViTEncoder successfully")
             
             # Enable memory efficient attention if available
             if hasattr(model, 'use_memory_efficient_attention'):
                 model.use_memory_efficient_attention = True
-                logging.info("Enabled memory efficient attention")
                 
             # Enable gradient checkpointing to save memory
             if hasattr(model, 'gradient_checkpointing'):
                 model.gradient_checkpointing = True
-                logging.info("Enabled gradient checkpointing")
                 
         except Exception as e:
-            logging.error(f"Failed to create ViTEncoder with args: {model_args}")
-            logging.error(f"Error: {e}")
+            logging.error(f"Failed to create ViTEncoder: {e}")
             raise
         if freeze_backbone:
             for param in model.parameters():
@@ -364,8 +353,7 @@ class PrithviSeg(nn.Module):
         self.prithvi_600M_backbone = model
         
         # Validate that the model is working correctly
-        logging.info(f"Model created successfully with {sum(p.numel() for p in model.parameters())} parameters")
-        logging.info(f"Model embed_dim: {model_args['embed_dim']}, patch_size: {model_args['patch_size']}, in_chans: {model_args['in_chans']}")
+        logging.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
 
         def upscaling_block(in_channels: int, out_channels: int) -> nn.Module:
             """Upscaling block.
@@ -402,17 +390,10 @@ class PrithviSeg(nn.Module):
         # Calculate the expected feature map size from the backbone
         patch_size = model_args["patch_size"]
         expected_feature_size = image_size // patch_size
-        logging.info(f"Image size: {image_size}, Patch size: {patch_size}")
-        logging.info(f"Expected feature map size: {expected_feature_size}x{expected_feature_size}")
         
         # Validate that the image size is divisible by patch size
         if image_size % patch_size != 0:
-            logging.warning(f"Image size {image_size} is not perfectly divisible by patch size {patch_size}")
-            logging.warning(f"256 % 14 = {256 % 14} (remainder)")
-            # Round down to ensure compatibility
-            expected_feature_size = image_size // patch_size
-            logging.info(f"Adjusted feature map size: {expected_feature_size}x{expected_feature_size}")
-            logging.info(f"This means we'll have {256 - (expected_feature_size * patch_size)} pixels that need special handling")
+            logging.warning(f"Image size {image_size} not perfectly divisible by patch size {patch_size}")
         
         # Use a simpler approach: always use 2x upscaling and interpolate to target size
         target_size = image_size
@@ -423,16 +404,6 @@ class PrithviSeg(nn.Module):
         while current_size < target_size:
             upscaling_steps.append(current_size)
             current_size *= 2
-            
-        logging.info(f"Upscaling steps: {upscaling_steps} -> {target_size}")
-        
-        # Final validation of upscaling
-        final_size = upscaling_steps[-1] * 2 if upscaling_steps else expected_feature_size
-        logging.info(f"Final upscaled size will be: {final_size}x{final_size}")
-        if final_size < target_size:
-            logging.warning(f"Warning: Final size {final_size} will be smaller than target {target_size}")
-        elif final_size > target_size:
-            logging.info(f"Final size {final_size} exceeds target {target_size} - will be interpolated to match")
         
         # Create embedding dimensions for the segmentation head
         embed_dims = [base_embed_dim * model_args["num_frames"]]
@@ -442,21 +413,17 @@ class PrithviSeg(nn.Module):
         # Ensure we have enough channels for the final output
         embed_dims.append(self.num_classes)
         
-        logging.info(f"Segmentation head embed_dims: {embed_dims}")
-        
         # Create upscaling blocks with the correct number of steps
         upscaling_blocks = []
         for i in range(len(upscaling_steps)):
             block = upscaling_block(embed_dims[i], embed_dims[i + 1])
             upscaling_blocks.append(block)
-            logging.info(f"Created upscaling block {i}: {embed_dims[i]} -> {embed_dims[i + 1]} channels")
             
         # Add final output layer
         final_conv = nn.Conv2d(
             kernel_size=1, in_channels=embed_dims[-2], out_channels=self.num_classes
         )
         upscaling_blocks.append(final_conv)
-        logging.info(f"Created final conv layer: {embed_dims[-2]} -> {self.num_classes} channels")
         
         # Add final interpolation layer to ensure correct output size
         final_interpolation = nn.Upsample(
@@ -465,7 +432,6 @@ class PrithviSeg(nn.Module):
             align_corners=False
         )
         upscaling_blocks.append(final_interpolation)
-        logging.info(f"Added final interpolation layer to ensure output size: {image_size}x{image_size}")
         
         self.segmentation_head = nn.Sequential(*upscaling_blocks)
         logging.info(f"Created segmentation head with {len(upscaling_blocks)} layers")

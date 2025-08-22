@@ -471,9 +471,15 @@ class PrithviSeg(nn.Module):
         logging.info(f"Input image shape: {img.shape}")
         logging.info(f"Expected image size: {self.model_args['img_size']}")
         
-        # Validate input size
-        if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
-            logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        # Validate input size based on tensor dimensions
+        if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
+            logging.info(f"5D input detected: batch={img.shape[0]}, channels={img.shape[1]}, temporal={img.shape[2]}, height={img.shape[3]}, width={img.shape[4]}")
+            if img.shape[3] != self.model_args['img_size'] or img.shape[4] != self.model_args['img_size']:
+                logging.warning(f"Input spatial size mismatch: got {img.shape[3]}x{img.shape[4]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        else:  # [batch, channels, height, width]
+            logging.info(f"4D input detected: batch={img.shape[0]}, channels={img.shape[1]}, height={img.shape[2]}, width={img.shape[3]}")
+            if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
+                logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
         
         features = self.prithvi_600M_backbone(img)
         logging.info(f"Backbone output shape: {features.shape}")
@@ -511,8 +517,12 @@ class PrithviSeg(nn.Module):
         out = self.segmentation_head(reshaped_features)
         logging.info(f"Segmentation head output shape: {out.shape}")
         
-        # Validate output size
-        expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
+        # Validate output size - use the spatial dimensions from the input
+        if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
+            expected_size = (img.shape[0], self.num_classes, img.shape[3], img.shape[4])
+        else:  # [batch, channels, height, width]
+            expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
+            
         logging.info(f"Expected output size: {expected_size}")
         
         # Ensure output has 4 dimensions

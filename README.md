@@ -1,6 +1,6 @@
-### Indaba Hack the Carbon 🏆🏆 3rd Place Solution (Kaggle, hosted by InsteaDeep) 🏆🏆
+### Indaba 2025 Hackathon. Hack the Carbon ([Kaggle](https://www.kaggle.com/competitions/hack-the-carbon/leaderboard), hosted by InstaDeep) 🏆🏆 3rd Place Solution 🏆🏆 
 
-This repository contains our solution that placed **3rd** in the Deep Learning Indaba Hackathon "Hack the Carbon" hosted by **InsteaDeep** on Kaggle.
+This repository contains our solution (azza Osman team) that placed **3rd** in the Deep Learning Indaba Hackathon "Hack the Carbon" hosted by **InstaDeep** on Kaggle.
 
 > Our main approach to the solution was "bigger is better", but we also addressed several significant issues in the InstaGeo codebase.
 
@@ -25,6 +25,6 @@ This repository contains our solution that placed **3rd** in the Deep Learning I
 
 ### Acknowledgements
 - Built on top of `InstaGeo-E2E-Geospatial-ML` and the competition starter resources.
-- Thanks to the Deep Learning Indaba and InsteaDeep Kaggle organizers and community.
+- Thanks to the Deep Learning Indaba and InstaDeep Kaggle organizers and community.
 
 

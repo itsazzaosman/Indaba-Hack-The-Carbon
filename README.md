@@ -2,7 +2,7 @@
 
 This repository contains our solution (azza Osman team) that placed **3rd** in the Deep Learning Indaba Hackathon "Hack the Carbon" hosted by **InstaDeep** on Kaggle.
 
-> Our main approach to the solution was "bigger is better", but we also addressed several significant issues in the InstaGeo codebase.
+> Our main approach to the solution was "bigger is better", but we also addressed several significant issues in the InstaGeo codebase. we have also attempted to exploite a potintial data leakge.
 
 ### Problem description
 Hack the Carbon is a geospatial machine learning challenge focused on estimating biomass and carbon stocks from Earth observation data. The task is a supervised regression problem where models predict biomass or a closely related proxy from multi-sensor satellite inputs (image to image regresssion).
@@ -17,7 +17,9 @@ Hack the Carbon is a geospatial machine learning challenge focused on estimating
 - **Competition solution code** built on top of `InstaGeo-E2E-Geospatial-ML`.
 - **Modifications to InstaGeo** to support the larger model ```Prithvi-EO-2.0-600M``` configuration and to stabilize training/inference.
 - **Dataset pipeline fixes**, notably ensuring data loader workers respect configuration.
-- **Experiment artifacts and configs** used during the attempts.
+- **Experiment artifacts and configs** integrating WandB. in addition to insure the results on the leader board producable.
+- **Notebook to explore data Leakage** see [Where is the data leakage?](#where-is-the-data-leakage) section below.
+
 
 ### Key modifications
 - **Larger model support**: Adapted `InstaGeo` model and config to accommodate a bigger backbone and higher capacity settings (see `instageo/model/configs/biomass.yaml` and related training code).
@@ -31,6 +33,10 @@ Hack the Carbon is a geospatial machine learning challenge focused on estimating
 1) Create and activate your environment using the provided dependencies under `InstaGeo-E2E-Geospatial-ML/requirements.txt` (or the project `pyproject.toml`).
 2) Configure your run via the YAML in `instageo/model/configs/` (e.g., `biomass.yaml`).
 3) Launch training or inference using the `instageo/model/run.py` entrypoints according to your setup.
+
+
+### Where is the data leakage?
+the primis is that since this data is been pulled from sentianl-2, and that the biomass is an important feature, there is a hgih probability that this data is publically avilalbe. our intent was that if we get there first we will share so that to prevent someone form gaining unfair advantage over others by over fitting the test set.
 
 ### Acknowledgements
 - Built on top of `InstaGeo-E2E-Geospatial-ML` and the competition starter resources.

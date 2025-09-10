@@ -4,6 +4,15 @@ This repository contains our solution (azza Osman team) that placed **3rd** in t
 
 > Our main approach to the solution was "bigger is better", but we also addressed several significant issues in the InstaGeo codebase.
 
+### Problem description
+Hack the Carbon is a geospatial machine learning challenge focused on estimating biomass and carbon stocks from Earth observation data. The task is a supervised regression problem where models predict biomass or a closely related proxy from multi-sensor satellite inputs (image to image regresssion).
+
+- Input: Preprocessed geospatial chips provided by the competition baseline. a 6 bands  256 × 256 reslition chips spanning across east africa imported from Sential-2 with 3 temporal resourtions.
+- Output: Predicted biomass/carbon density values for each test example in the required submission format.
+- Objective: Learn spatial patterns that map remote sensing signals to biomass/carbon targets to enable scalable carbon accounting.
+- Evaluation: Performance is scored on the hidden test set using the competition’s regression metric (e.g., RMSE) as defined on the leaderboard.
+
+
 ### What this repo contains
 - **Competition solution code** built on top of `InstaGeo-E2E-Geospatial-ML`.
 - **Modifications to InstaGeo** to support the larger model ```Prithvi-EO-2.0-600M``` configuration and to stabilize training/inference.

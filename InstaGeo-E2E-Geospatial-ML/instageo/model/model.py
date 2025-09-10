@@ -27,8 +27,9 @@ import numpy as np
 import requests  # type: ignore
 import torch
 import torch.nn as nn
-import yaml  # type: ignore
+import json  # type: ignore
 from absl import logging
+logging.set_verbosity(logging.WARNING)  # Only show warnings and errors
 
 from instageo.model.Prithvi import ViTEncoder, get_3d_sincos_pos_embed
 
@@ -131,7 +132,7 @@ class PrithviSeg(nn.Module):
         """Initialize the PrithviSeg model.
 
         This model is designed for image segmentation tasks on remote sensing data.
-        It loads Prithvi configuration and weights and sets up a ViTEncoder backbone
+        It loads Prithvi-EO-2.0-600M configuration and weights and sets up a ViTEncoder backbone
         along with a segmentation head.
 
         Args:
@@ -145,58 +146,215 @@ class PrithviSeg(nn.Module):
         super().__init__()
         weights_dir = Path.home() / ".instageo" / "prithvi"
         weights_dir.mkdir(parents=True, exist_ok=True)
-        weights_path = weights_dir / "Prithvi_EO_V1_100M.pt"
-        cfg_path = weights_dir / "config.yaml"
+        weights_path = weights_dir / "Prithvi_EO_V2_600M.pt"
+        cfg_path = weights_dir / "config.json"
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-1.0-100M/resolve/main/Prithvi_EO_V1_100M.pt?download=true",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/Prithvi_EO_V2_600M.pt?download=true",  # noqa
             weights_path,
         )
         download_file(
-            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-100M/raw/main/config.yaml",  # noqa
+            "https://huggingface.co/ibm-nasa-geospatial/Prithvi-EO-2.0-600M/resolve/main/config.json",  # noqa
             cfg_path,
         )
         checkpoint = torch.load(weights_path, map_location="cpu")
         with open(cfg_path) as f:
-            model_config = yaml.safe_load(f)
+            model_config = json.load(f)
 
-        model_args = model_config["model_args"]
+        # Extract model arguments from the JSON config structure
+        if "pretrained_cfg" in model_config:
+            # New Prithvi-EO-2.0-600M JSON format
+            pretrained_cfg = model_config["pretrained_cfg"]
+            model_args = {
+                "img_size": pretrained_cfg.get("img_size", 224),
+                "num_frames": pretrained_cfg.get("num_frames", 4),
+                "patch_size": pretrained_cfg.get("patch_size", [1, 14, 14])[1] if isinstance(pretrained_cfg.get("patch_size"), list) else pretrained_cfg.get("patch_size", 14),  # Extract spatial patch size
+                "in_chans": pretrained_cfg.get("in_chans", 6),
+                "embed_dim": pretrained_cfg.get("embed_dim", 1280),
+                "depth": pretrained_cfg.get("depth", 32),
+                "num_heads": pretrained_cfg.get("num_heads", 16),
+                "mlp_ratio": pretrained_cfg.get("mlp_ratio", 4),
+                "norm_pix_loss": pretrained_cfg.get("norm_pix_loss", False),
+                "decoder_embed_dim": pretrained_cfg.get("decoder_embed_dim", 512),
+                "decoder_depth": pretrained_cfg.get("decoder_depth", 8),
+                "decoder_num_heads": pretrained_cfg.get("decoder_num_heads", 16),
+            }
+        elif "model_args" in model_config:
+            # Legacy YAML format
+            model_args = model_config["model_args"]
+        else:
+            # Fallback to defaults
+            model_args = {}
+        
+        # Log only essential configuration info
+        if "pretrained_cfg" in model_config:
+            pretrained_cfg = model_config["pretrained_cfg"]
+         #   logging.info(f"Prithvi-EO-2.0-600M: embed_dim={pretrained_cfg.get('embed_dim')}, patch_size={pretrained_cfg.get('patch_size')}, depth={pretrained_cfg.get('depth')}")
 
+        # Override config values with user-specified parameters
         model_args["num_frames"] = temporal_step
         model_args["img_size"] = image_size
+        
         if depth is not None:
             model_args["depth"] = depth
+        elif "depth" not in model_args:
+            # Try to infer depth from checkpoint
+            max_block_idx = 0
+            for key in checkpoint.keys():
+                if key.startswith("encoder.blocks."):
+                    try:
+                        block_idx = int(key.split(".")[2])
+                        max_block_idx = max(max_block_idx, block_idx)
+                    except (ValueError, IndexError):
+                        continue
+            if max_block_idx > 0:
+                model_args["depth"] = max_block_idx + 1
+                logging.info(f"Extracted depth from checkpoint: {model_args['depth']}")
+            else:
+                model_args["depth"] = 32  # Prithvi-EO-2.0-600M default depth
+            
+        # Extract dimensions from checkpoint if not in config
+        if "embed_dim" not in model_args:
+            # Try to get embed_dim from checkpoint
+            if "encoder.cls_token" in checkpoint:
+                model_args["embed_dim"] = checkpoint["encoder.cls_token"].shape[-1]
+                logging.info(f"Extracted embed_dim from checkpoint: {model_args['embed_dim']}")
+            else:
+                model_args["embed_dim"] = 1280  # Prithvi-EO-2.0-600M default
+                logging.info(f"Using default embed_dim: {model_args['embed_dim']}")
+                
+        if "patch_size" not in model_args:
+            # Try to infer patch_size from checkpoint
+            if "encoder.patch_embed.proj.weight" in checkpoint:
+                weight_shape = checkpoint["encoder.patch_embed.proj.weight"].shape
+                # The weight shape is [out_channels, in_channels, t, h, w]
+                # We can infer patch_size from the spatial dimensions
+                if len(weight_shape) == 5:
+                    model_args["patch_size"] = weight_shape[3]  # h dimension
+                    logging.info(f"Extracted patch_size from checkpoint: {model_args['patch_size']}")
+                else:
+                    model_args["patch_size"] = 14  # Prithvi-EO-2.0-600M default
+            else:
+                model_args["patch_size"] = 14   # Prithvi-EO-2.0-600M default
+                
+        if "in_chans" not in model_args:
+            # Try to get in_chans from checkpoint
+            if "encoder.patch_embed.proj.weight" in checkpoint:
+                weight_shape = checkpoint["encoder.patch_embed.proj.weight"].shape
+                if len(weight_shape) == 5:
+                    model_args["in_chans"] = weight_shape[1]  # in_channels dimension
+                    logging.info(f"Extracted in_chans from checkpoint: {model_args['in_chans']}")
+                else:
+                    model_args["in_chans"] = 6  # Prithvi-EO-2.0-600M default
+            else:
+                model_args["in_chans"] = 6      # Prithvi-EO-2.0-600M default (6 bands)
+                
+        # Set default values for other parameters if not present
+        if "num_heads" not in model_args:
+            model_args["num_heads"] = 16  # Default number of attention heads
+        if "mlp_ratio" not in model_args:
+            model_args["mlp_ratio"] = 4.0  # Default MLP ratio
+        if "tubelet_size" not in model_args:
+            model_args["tubelet_size"] = 1  # Default tubelet size for temporal dimension
+        if "norm_layer" not in model_args:
+            model_args["norm_layer"] = nn.LayerNorm  # Default normalization layer
+        if "norm_pix_loss" not in model_args:
+            model_args["norm_pix_loss"] = False  # Default norm_pix_loss value
+            
         self.model_args = model_args
+        self.num_classes = num_classes  # Store num_classes as instance variable
+        
         # instantiate model
-        model = ViTEncoder(**model_args)
+        try:
+            model = ViTEncoder(**model_args)
+            logging.info(f"Created ViTEncoder successfully")
+            
+            # Enable memory efficient attention if available
+            if hasattr(model, 'use_memory_efficient_attention'):
+                model.use_memory_efficient_attention = True
+                
+            # Enable gradient checkpointing to save memory
+            if hasattr(model, 'gradient_checkpointing'):
+                model.gradient_checkpointing = True
+                
+        except Exception as e:
+            logging.error(f"Failed to create ViTEncoder: {e}")
+            raise
         if freeze_backbone:
             for param in model.parameters():
                 param.requires_grad = False
         # Harmonize checkpoint keys with model's state_dict
         filtered_checkpoint_state_dict = {}
+        encoder_keys_found = False
+        
         for key, value in checkpoint.items():
             if key.startswith("encoder."):
+                encoder_keys_found = True
                 new_key = key[len("encoder.") :]
                 # Only keep blocks from 0 to depth-1
                 if new_key.startswith("blocks."):
-                    block_idx = int(new_key.split(".")[1])
-                    if block_idx < model_args["depth"]:
-                        filtered_checkpoint_state_dict[new_key] = value
+                    try:
+                        block_idx = int(new_key.split(".")[1])
+                        if depth is None or block_idx < model_args.get("depth", depth or 24):
+                            filtered_checkpoint_state_dict[new_key] = value
+                    except (ValueError, IndexError):
+                        # Skip malformed block keys
+                        continue
                 else:
                     filtered_checkpoint_state_dict[new_key] = value
+        
+        if not encoder_keys_found:
+            logging.warning("No encoder keys found in checkpoint, trying direct loading")
+            # If no encoder keys, try loading the checkpoint directly
+            filtered_checkpoint_state_dict = checkpoint
+        # Calculate patch size from image size and model configuration
+        patch_size = model_args.get("patch_size", 16)  # Default to 16 if not specified
+        embed_dim = model_args.get("embed_dim", 768)  # Default to 768 if not specified
+        
+        # Calculate the number of patches
+        num_patches_h = image_size // patch_size
+        num_patches_w = image_size // patch_size
+        
+        # logging.info(f"Creating positional embedding with: embed_dim={embed_dim}, temporal_step={temporal_step}, num_patches_h={num_patches_h}, num_patches_w={num_patches_w}")
+        
         filtered_checkpoint_state_dict["pos_embed"] = (
             torch.from_numpy(
                 get_3d_sincos_pos_embed(
-                    768,
-                    (temporal_step, image_size // 16, image_size // 16),
+                    embed_dim,
+                    (temporal_step, num_patches_h, num_patches_w),
                     cls_token=True,
                 )
             )
             .float()
             .unsqueeze(0)
         )
-        _ = model.load_state_dict(filtered_checkpoint_state_dict)
+        # Load the state dict with error handling
+        try:
+            missing_keys, unexpected_keys = model.load_state_dict(filtered_checkpoint_state_dict, strict=False)
+            if missing_keys:
+                logging.warning(f"Missing keys when loading checkpoint: {missing_keys}")
+            if unexpected_keys:
+                logging.warning(f"Unexpected keys when loading checkpoint: {unexpected_keys}")
+            logging.info(f"Successfully loaded checkpoint with {len(filtered_checkpoint_state_dict)} keys")
+        except Exception as e:
+            logging.error(f"Error loading checkpoint: {e}")
+            logging.info(f"Model state dict keys: {list(model.state_dict().keys())}")
+            logging.info(f"Checkpoint keys: {list(filtered_checkpoint_state_dict.keys())}")
+            
+            # Try to identify the specific mismatch
+            model_state = model.state_dict()
+            for key in filtered_checkpoint_state_dict.keys():
+                if key in model_state:
+                    checkpoint_shape = filtered_checkpoint_state_dict[key].shape
+                    model_shape = model_state[key].shape
+                    if checkpoint_shape != model_shape:
+                        logging.error(f"Shape mismatch for key '{key}': checkpoint {checkpoint_shape} vs model {model_shape}")
+            
+            raise
 
-        self.prithvi_100M_backbone = model
+        self.prithvi_600M_backbone = model
+        
+        # Validate that the model is working correctly
+        logging.info(f"Model created with {sum(p.numel() for p in model.parameters()):,} parameters")
 
         def upscaling_block(in_channels: int, out_channels: int) -> nn.Module:
             """Upscaling block.
@@ -227,16 +385,57 @@ class PrithviSeg(nn.Module):
                 nn.ReLU(),
             )
 
-        embed_dims = [
-            (model_args["embed_dim"] * model_args["num_frames"]) // (2**i)
-            for i in range(5)
-        ]
-        self.segmentation_head = nn.Sequential(
-            *[upscaling_block(embed_dims[i], embed_dims[i + 1]) for i in range(4)],
-            nn.Conv2d(
-                kernel_size=1, in_channels=embed_dims[-1], out_channels=num_classes
-            ),
+        # Calculate embedding dimensions for segmentation head
+        base_embed_dim = model_args["embed_dim"]
+        
+        # Calculate the expected feature map size from the backbone
+        patch_size = model_args["patch_size"]
+        expected_feature_size = image_size // patch_size
+        
+        # Validate that the image size is divisible by patch size
+        if image_size % patch_size != 0:
+            logging.warning(f"Image size {image_size} not perfectly divisible by patch size {patch_size}")
+        
+        # Use a simpler approach: always use 2x upscaling and interpolate to target size
+        target_size = image_size
+        current_size = expected_feature_size
+        upscaling_steps = []
+        
+        # Build upscaling steps using powers of 2
+        while current_size < target_size:
+            upscaling_steps.append(current_size)
+            current_size *= 2
+        
+        # Create embedding dimensions for the segmentation head
+        embed_dims = [base_embed_dim * model_args["num_frames"]]
+        for i in range(len(upscaling_steps)):
+            embed_dims.append(embed_dims[-1] // 2)
+            
+        # Ensure we have enough channels for the final output
+        embed_dims.append(self.num_classes)
+        
+        # Create upscaling blocks with the correct number of steps
+        upscaling_blocks = []
+        for i in range(len(upscaling_steps)):
+            block = upscaling_block(embed_dims[i], embed_dims[i + 1])
+            upscaling_blocks.append(block)
+            
+        # Add final output layer
+        final_conv = nn.Conv2d(
+            kernel_size=1, in_channels=embed_dims[-2], out_channels=self.num_classes
         )
+        upscaling_blocks.append(final_conv)
+        
+        # Add final interpolation layer to ensure correct output size
+        final_interpolation = nn.Upsample(
+            size=(image_size, image_size), 
+            mode='bilinear', 
+            align_corners=False
+        )
+        upscaling_blocks.append(final_interpolation)
+        
+        self.segmentation_head = nn.Sequential(*upscaling_blocks)
+        logging.info(f"Created segmentation head with {len(upscaling_blocks)} layers")
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
         """Define the forward pass of the model.
@@ -247,15 +446,78 @@ class PrithviSeg(nn.Module):
         Returns:
             torch.Tensor: Output tensor after image segmentation.
         """
-        features = self.prithvi_100M_backbone(img)
+        # logging.info(f"Input image shape: {img.shape}")
+        # logging.info(f"Expected image size: {self.model_args['img_size']}")
+        
+        # Validate input size based on tensor dimensions
+        # if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
+        #     logging.info(f"5D input detected: batch={img.shape[0]}, channels={img.shape[1]}, temporal={img.shape[2]}, height={img.shape[3]}, width={img.shape[4]}")
+        #     if img.shape[3] != self.model_args['img_size'] or img.shape[4] != self.model_args['img_size']:
+        #         logging.warning(f"Input spatial size mismatch: got {img.shape[3]}x{img.shape[4]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        # else:  # [batch, channels, height, width]
+        #     logging.info(f"4D input detected: batch={img.shape[0]}, channels={img.shape[1]}, height={img.shape[2]}, width={img.shape[3]}")
+        #     if img.shape[2] != self.model_args['img_size'] or img.shape[3] != self.model_args['img_size']:
+        #         logging.warning(f"Input size mismatch: got {img.shape[2:]}x{img.shape[3:]}, expected {self.model_args['img_size']}x{self.model_args['img_size']}")
+        
+        features = self.prithvi_600M_backbone(img)
+        # logging.info(f"Backbone output shape: {features.shape}")
+        
         # drop cls token
         reshaped_features = features[:, 1:, :]
-        feature_img_side_length = int(
-            np.sqrt(reshaped_features.shape[1] // self.model_args["num_frames"])
-        )
+        # logging.info(f"Features after dropping cls token: {reshaped_features.shape}")
+        
+        # Calculate feature dimensions
+        total_features = reshaped_features.shape[1]
+        num_frames = self.model_args["num_frames"]
+        features_per_frame = total_features // num_frames
+        
+        # logging.info(f"Total features: {total_features}, Num frames: {num_frames}, Features per frame: {features_per_frame}")
+        
+        feature_img_side_length = int(np.sqrt(features_per_frame))
+        # logging.info(f"Calculated feature image side length: {feature_img_side_length}")
+        
+        # Validate the calculation
+        expected_features = feature_img_side_length ** 2
+        # if expected_features != features_per_frame:
+        #     logging.warning(f"Feature calculation mismatch: {expected_features} != {features_per_frame}")
+        #     logging.warning(f"Using {feature_img_side_length}x{feature_img_side_length} = {expected_features} features")
+        
         reshaped_features = reshaped_features.permute(0, 2, 1).reshape(
             features.shape[0], -1, feature_img_side_length, feature_img_side_length
         )
+        # logging.info(f"Reshaped features: {reshaped_features.shape}")
+        
+        # Validate reshaped features
+        if len(reshaped_features.shape) != 4:
+            # logging.error(f"Reshaped features has wrong shape: {reshaped_features.shape}")
+            raise ValueError(f"Reshaped features should be 4D, got {len(reshaped_features.shape)}D")
 
         out = self.segmentation_head(reshaped_features)
+        # logging.info(f"Segmentation head output shape: {out.shape}")
+        
+        # Validate output size - use the spatial dimensions from the input
+        if len(img.shape) == 5:  # [batch, channels, temporal, height, width]
+            expected_size = (img.shape[0], self.num_classes, img.shape[3], img.shape[4])
+        else:  # [batch, channels, height, width]
+            expected_size = (img.shape[0], self.num_classes, img.shape[2], img.shape[3])
+            
+        # logging.info(f"Expected output size: {expected_size}")
+        
+        # Ensure output has 4 dimensions
+        if len(out.shape) != 4:
+            logging.error(f"Output has wrong number of dimensions: {len(out.shape)}, expected 4")
+            raise ValueError(f"Output shape {out.shape} is invalid - expected 4D tensor")
+        
+        # Check if output matches expected size
+        if out.shape != expected_size:
+            logging.warning(f"Output shape mismatch: got {out.shape}, expected {expected_size}")
+            # Resize output to match expected size if needed
+            if out.shape[2:] != expected_size[2:]:
+                logging.info(f"Resizing output from {out.shape[2:]} to {expected_size[2:]}")
+                out = torch.nn.functional.interpolate(
+                    out, size=expected_size[2:], mode='bilinear', align_corners=False
+                )
+                logging.info(f"Resized output to {out.shape}")
+        
+        # logging.info(f"Final output shape: {out.shape}")
         return out

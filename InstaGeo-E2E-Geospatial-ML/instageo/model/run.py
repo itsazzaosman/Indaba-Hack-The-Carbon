@@ -122,7 +122,7 @@ def create_dataloader(
     dataset: Dataset,
     batch_size: int,
     shuffle: bool = False,
-    num_workers: int = 1,
+    num_workers: int = 12,
     collate_fn: Optional[Callable] = None,
     pin_memory: bool = True,
 ) -> DataLoader:
@@ -147,7 +147,7 @@ def create_dataloader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        num_workers=num_workers,
+        num_workers=12,
         collate_fn=collate_fn,
         pin_memory=pin_memory,
     )
@@ -247,19 +247,14 @@ def compute_mean_std(data_loader: DataLoader) -> Tuple[List[float], List[float]]
     mean = 0.0
     var = 0.0
     nb_samples = 0
-
     for data, _ in data_loader:
         # Reshape data to (B, C, T*H*W)
         batch_samples = data.size(0)
         data = data.view(batch_samples, data.size(1), -1)
-
         nb_samples += batch_samples
-
         # Sum over batch, height and width
         mean += data.mean(2).sum(0)
-
         var += data.var(2, unbiased=False).sum(0)
-
     mean /= nb_samples
     var /= nb_samples
     std = torch.sqrt(var)
@@ -278,6 +273,10 @@ def main(cfg: DictConfig) -> None:
     Returns:
         None.
     """
+    # Set memory optimization environment variables
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+    
     log.info(f"Script: {__file__}")
     log.info(f"Imported hydra config:\n{OmegaConf.to_yaml(cfg)}")
 
@@ -286,7 +285,6 @@ def main(cfg: DictConfig) -> None:
     STD = cfg.dataloader.std
     IM_SIZE = cfg.dataloader.img_size
     TEMPORAL_SIZE = cfg.dataloader.temporal_dim
-
     batch_size = cfg.train.batch_size
     root_dir = cfg.root_dir
     valid_filepath = cfg.valid_filepath
@@ -315,7 +313,7 @@ def main(cfg: DictConfig) -> None:
             train_dataset,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=12,
         )
         mean, std = compute_mean_std(train_loader)
         print(json.dumps({"mean": mean, "std": std}))
@@ -339,7 +337,6 @@ def main(cfg: DictConfig) -> None:
             no_data_value=cfg.dataloader.no_data_value,
             constant_multiplier=cfg.dataloader.constant_multiplier,
         )
-
         valid_dataset = InstaGeoDataset(
             filename=valid_filepath,
             input_root=root_dir,
@@ -358,10 +355,10 @@ def main(cfg: DictConfig) -> None:
             constant_multiplier=cfg.dataloader.constant_multiplier,
         )
         train_loader = create_dataloader(
-            train_dataset, batch_size=batch_size, shuffle=True, num_workers=4
+            train_dataset, batch_size=batch_size, shuffle=True, num_workers=12
         )
         valid_loader = create_dataloader(
-            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=4
+            valid_dataset, batch_size=batch_size, shuffle=False, num_workers=12
         )
         model = create_model(cfg, IM_SIZE, TEMPORAL_SIZE)
         hydra_out_dir = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
@@ -375,24 +372,23 @@ def main(cfg: DictConfig) -> None:
             monitor=monitor,
             mode=mode,
         )
-
         # Log learning rate every step regardless of scheduler
         lr_monitor = LearningRateMonitor(logging_interval="step")
-
         # Create loggers
         loggers = [TensorBoardLogger(hydra_out_dir, name="instageo")]
-        
+
         # Add WandB logger if enabled
+        wandb_logger = None
         if getattr(cfg.train, "use_wandb", False):
-            # Log important hyperparameters to WandB
+            # Initialize WandbLogger on all ranks (Lightning handles dummy on non-zero ranks)
             wandb_logger = WandbLogger(
                 project=getattr(cfg.train, "wandb_project", "instageo"),
                 name=getattr(cfg.train, "wandb_run_name", None),
                 log_model=getattr(cfg.train, "wandb_log_model", False)
             )
-            
-            # Log initial hyperparameters to config
-            wandb_logger.experiment.config.update({
+
+            # Use built-in log_hyperparams for safe config logging across ranks
+            config_dict = {
                 "initial_learning_rate": cfg.train.learning_rate,
                 "initial_weight_decay": cfg.train.weight_decay,
                 "batch_size": cfg.train.batch_size,
@@ -403,39 +399,49 @@ def main(cfg: DictConfig) -> None:
                 "dataloader_temporal_dim": cfg.dataloader.temporal_dim,
                 "dataloader_bands": cfg.dataloader.bands,
                 "is_regression_task": cfg.is_reg_task
-            })
-            
-            # Log the biomass.yaml config file as an artifact
+            }
+            wandb_logger.log_hyperparams(config_dict)  # This is rank-safe and logs only on rank 0 internally
+
+            loggers.append(wandb_logger)
+
+        # Calculate gradient accumulation steps to maintain effective batch size
+        # Original batch_size: 12, new batch_size: 4, so accumulate_grad_batches = 3
+        effective_batch_size = 12  # Original desired batch size
+        actual_batch_size = cfg.train.batch_size
+        accumulate_grad_batches = max(1, effective_batch_size // actual_batch_size)
+        
+        trainer = pl.Trainer(
+            accelerator=get_device(),
+            devices=8,  # Use all 8 A100s
+            strategy="ddp",  # Distributed Data Parallel
+            max_epochs=cfg.train.num_epochs,
+            callbacks=[checkpoint_callback, lr_monitor],
+            logger=loggers,
+            log_every_n_steps=1,  # Ensure frequent logging for metrics visibility
+            precision="16-mixed",  # Use mixed precision to save memory
+            accumulate_grad_batches=accumulate_grad_batches,  # Gradient accumulation to maintain effective batch size
+        )
+
+        # Log the artifact only after trainer is initialized (for global_rank check)
+        if wandb_logger is not None and trainer.global_rank == 0:
+            # Log the biomass.yaml config file as an artifact (only on rank 0)
             try:
                 config_dir = os.path.join(os.path.dirname(__file__), "configs")
                 biomass_config_path = os.path.join(config_dir, "biomass.yaml")
-                
+
                 if os.path.exists(biomass_config_path):
-                    wandb_logger.experiment.log_artifact(
-                        wandb.Artifact(
-                            name="biomass_config",
-                            type="config",
-                            description="Biomass training configuration file"
-                        ).add_file(biomass_config_path, "biomass.yaml")
+                    artifact = wandb.Artifact(
+                        name="biomass_config",
+                        type="config",
+                        description="Biomass training configuration file"
                     )
+                    artifact.add_file(biomass_config_path, "biomass.yaml")
+                    wandb_logger.experiment.log_artifact(artifact)
                     log.info("Successfully logged biomass.yaml config file to WandB")
                 else:
                     log.warning(f"Biomass config file not found at {biomass_config_path}")
             except Exception as e:
                 log.warning(f"Failed to log config file to WandB: {e}")
-            
-            # Store wandb_logger reference for the model to access
-            # This allows the model to log current LR and weight decay during training
-            wandb_logger.experiment.config["wandb_logger"] = wandb_logger
-            
-            loggers.append(wandb_logger)
-
-        trainer = pl.Trainer(
-            accelerator=get_device(),
-            max_epochs=cfg.train.num_epochs,
-            callbacks=[checkpoint_callback, lr_monitor],
-            logger=loggers,
-        )
 
         # run training and validation
         trainer.fit(model, train_loader, valid_loader)
